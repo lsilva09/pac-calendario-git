@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calendário PAC</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topo">
+  <div class="marca">
+    <h1>Calendário PAC</h1>
+    <span id="arquivo" class="sutil"></span>
+  </div>
+  <div class="navegacao">
+    <button id="mesAnterior" class="icone" aria-label="Mês anterior">‹</button>
+    <h2 id="tituloMes"></h2>
+    <button id="mesSeguinte" class="icone" aria-label="Mês seguinte">›</button>
+    <button id="hoje" class="secundario">Hoje</button>
+  </div>
+  <div class="acoes">
+    <div class="alternador" role="tablist">
+      <button data-vista="ambiente" class="ativo" role="tab">Por ambiente</button>
+      <button data-vista="mes" role="tab">Mês</button>
+    </div>
+    <button id="abrirAjuda" class="secundario" title="Guia rápido">? Como usar</button>
+    <button id="novo" class="primario">+ Novo evento</button>
+  </div>
+</header>
+
+<section class="filtros">
+  <label>Ambiente
+    <select id="filtroAmbiente"><option value="">Todos</option></select>
+  </label>
+  <label class="busca">Buscar
+    <input id="filtroBusca" type="search" placeholder="Evento, instrutor, PROAD…">
+  </label>
+  <label class="check"><input id="filtroVirtual" type="checkbox" checked> Mostrar EaD / online</label>
+  <label class="check"><input id="filtroSuspensos" type="checkbox" checked> Mostrar suspensos</label>
+</section>
+
+<main class="corpo">
+  <div id="vista" class="vista"></div>
+  <aside class="lateral">
+    <section>
+      <h3>Conflitos de ambiente <span id="qtdConflitos" class="contador"></span></h3>
+      <p class="sutil">Eventos presenciais no mesmo ambiente, no mesmo dia e com horários sobrepostos (ou sem horário informado).</p>
+      <ul id="listaConflitos" class="lista"></ul>
+    </section>
+    <section>
+      <h3>Sem data reconhecida <span id="qtdSemData" class="contador"></span></h3>
+      <p class="sutil">Eventos do bloco deste mês cujo PERÍODO está vazio ou não pôde ser interpretado.</p>
+      <ul id="listaSemData" class="lista"></ul>
+    </section>
+  </aside>
+</main>
+
+<dialog id="modal">
+  <form id="formEvento" method="dialog">
+    <header class="modal-topo">
+      <h2 id="tituloModal">Editar evento</h2>
+      <span id="linhaModal" class="sutil"></span>
+    </header>
+    <div class="grade-campos" id="camposForm"></div>
+    <div id="previa" class="previa"></div>
+    <footer class="modal-rodape">
+      <button type="button" id="excluir" class="perigo">Excluir</button>
+      <span class="espaco"></span>
+      <button type="button" id="cancelar" class="secundario">Cancelar</button>
+      <button type="submit" id="salvar" class="primario">Salvar na planilha</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog id="ajuda" class="ajuda">
+  <header class="modal-topo">
+    <h2>Como usar o Calendário PAC</h2>
+    <span class="espaco"></span>
+    <button type="button" class="icone" data-fechar-ajuda aria-label="Fechar">×</button>
+  </header>
+  <div class="ajuda-corpo">
+    <section>
+      <h3>1. Abrir e fechar</h3>
+      <ul>
+        <li>No Finder, dê dois cliques em <b>Iniciar Calendario PAC.command</b> (pasta <code>pac-calendario</code>). O calendário abre no navegador.</li>
+        <li>Para encerrar, feche a janela do Terminal que se abriu junto.</li>
+        <li>Os dados vêm da aba <b>PAC</b> da planilha <b>PAC 2026.xlsx</b>. Tudo o que você salva aqui é gravado nela.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>2. Navegar</h3>
+      <ul>
+        <li><b>‹ ›</b> (ou as setas ← → do teclado) trocam o mês; <b>Hoje</b> volta ao mês atual.</li>
+        <li><b>Por ambiente</b>: cada linha é um local e cada coluna, um dia. É a melhor vista para ver se uma sala está ocupada.</li>
+        <li><b>Mês</b>: calendário tradicional, com uma cor por ambiente.</li>
+        <li><b>Filtros</b>: escolha um ambiente, busque por nome, instrutor ou PROAD, e oculte EaD/online ou eventos suspensos.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>3. Conflitos de ambiente</h3>
+      <ul>
+        <li>Células com <span class="marca-conflito">borda vermelha</span> indicam dois eventos presenciais <b>no mesmo local, no mesmo dia e com horários sobrepostos</b> (ou sem horário informado).</li>
+        <li>O painel <b>Conflitos de ambiente</b>, à direita, lista os conflitos do mês. Clique no nome para abrir o evento.</li>
+        <li>Eventos EaD/online e eventos sem local não entram nessa conferência.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>4. Editar um evento</h3>
+      <ul>
+        <li>Clique no cartão do evento, altere os campos e clique em <b>Salvar na planilha</b>.</li>
+        <li>Enquanto você digita, a caixa abaixo do formulário mostra <b>as datas reconhecidas</b> e avisa se a mudança <b>criará um conflito</b>.</li>
+        <li>O <b>LOCAL</b> é escolhido num menu com a lista oficial de ambientes. Se o evento usa mais de um local, clique em <b>+ outro ambiente</b>.</li>
+        <li>Para incluir um local novo na lista, edite o arquivo <code>pac-calendario/locais.json</code> e recarregue a página.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>5. Como escrever o PERÍODO</h3>
+      <table class="exemplos">
+        <tr><td><code>15/04</code></td><td>um dia</td></tr>
+        <tr><td><code>09, 10 e 11/02</code></td><td>dias soltos do mesmo mês</td></tr>
+        <tr><td><code>11/03, 26/03 e 16/04</code></td><td>datas espaçadas em meses diferentes</td></tr>
+        <tr><td><code>06 a 10/04</code></td><td>intervalo (conta só dias úteis)</td></tr>
+        <tr><td><code>23/02 a 23/03</code></td><td>intervalo entre meses</td></tr>
+      </table>
+      <p class="sutil">Se o PERÍODO ficar vazio ou não for reconhecido, o evento aparece no painel <b>Sem data reconhecida</b> do mês, em vez de aparecer no calendário.</p>
+    </section>
+    <section>
+      <h3>6. Cursos com várias datas</h3>
+      <ul>
+        <li>Um curso é <b>uma linha da planilha</b>, mesmo que apareça em vários dias. Alterar nome, horário ou local <b>muda todas as datas</b> dele.</li>
+        <li>Para tirar ou acrescentar um dia, edite apenas o <b>PERÍODO</b>.</li>
+        <li>Se uma data tiver dados diferentes (outra turma, sala ou horário), tire essa data do curso original e crie um <b>novo evento</b> só para ela.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>7. Criar e excluir</h3>
+      <ul>
+        <li><b>+ Novo evento</b> ou <b>duplo clique num dia</b>. Na vista por ambiente, o local já vem preenchido.</li>
+        <li>O evento novo é gravado numa linha vazia do bloco do mês na planilha (ou no fim da aba, se o bloco estiver cheio).</li>
+        <li><b>Excluir</b> (dentro do evento) apaga o conteúdo da linha, depois de pedir confirmação.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>8. Segurança</h3>
+      <ul>
+        <li><b>Feche a planilha no Excel</b> antes de salvar pelo calendário.</li>
+        <li>Antes de cada gravação, uma cópia da planilha é guardada em <code>pac-calendario/backups</code> (as 30 mais recentes).</li>
+        <li>Se a linha tiver sido alterada por outra pessoa depois que você abriu a página, o sistema <b>não grava</b> e pede para recarregar.</li>
+        <li>Só as células editadas mudam: as outras abas, os comentários e a formatação continuam intactos.</li>
+      </ul>
+    </section>
+  </div>
+  <footer class="modal-rodape">
+    <span class="sutil">Reabra este guia a qualquer momento pelo botão <b>? Como usar</b>.</span>
+    <span class="espaco"></span>
+    <button type="button" class="primario" data-fechar-ajuda>Entendi</button>
+  </footer>
+</dialog>
+
+<datalist id="dlAmbientes"></datalist>
+<datalist id="dlModalidades"></datalist>
+<datalist id="dlAreas"></datalist>
+<datalist id="dlOrigens"></datalist>
+
+<div id="aviso" class="aviso" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

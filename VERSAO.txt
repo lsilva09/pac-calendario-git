@@ -1,0 +1,1 @@
+Versão 1 — snapshot de 25/10/2026. Para usar: dois cliques em 'Iniciar Calendario PAC.command'. Lê e grava a aba PAC de '../PAC 2026.xlsx'.
