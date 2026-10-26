@@ -1,7 +1,7 @@
-"""Servidor local do Calendário PAC.
+"""Servidor local do Calendário PAC v2.
 
-Uso:  python3 servidor.py ["caminho/da/planilha.xlsx"] [--porta 8765]
-Depois abra http://localhost:8765 no navegador.
+Uso:  python3 servidor.py [--porta 8766] [--sem-navegador]
+Na primeira execução, se o banco estiver vazio, importa a aba PAC de '../PAC 2026.xlsx'.
 """
 import argparse
 import json
@@ -9,209 +9,143 @@ import os
 import re
 import sys
 import webbrowser
+from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, AQUI)
 
-from periodo import interpretar_periodo, interpretar_horario  # noqa: E402
-from planilha import Planilha, ConflitoEdicao, CAMPOS, MESES  # noqa: E402
+import db  # noqa: E402
+import exportar  # noqa: E402
+from periodo import interpretar_periodo  # noqa: E402
 
-PLANILHA_PADRAO = os.path.join(os.path.dirname(AQUI), 'PAC 2026.xlsx')
-ARQUIVO_LOCAIS = os.path.join(AQUI, 'locais.json')
 ESTATICOS = os.path.join(AQUI, 'static')
 TIPOS = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
          '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'}
 
-planilha = None
 
-
-def e_virtual(campos):
-    """Eventos sem ambiente físico (EaD, online, Zoom, plataformas)."""
-    mod = campos.get('M', '').lower()
-    local = campos.get('N', '').lower()
-    if 'presencial' in mod and 'tele' not in mod:
-        return False
-    if 'híbrido' in mod or 'hibrido' in mod:
-        return False
-    if any(p in mod for p in ('ead', 'online', 'telepresencial')):
-        return True
-    return 'plataforma' in local
-
-
-class LocalInvalido(Exception):
-    pass
-
-
-def ler_locais():
-    """Lista oficial de locais (relida a cada uso para refletir edições no arquivo)."""
-    with open(ARQUIVO_LOCAIS, encoding='utf-8') as f:
-        return json.load(f)['locais']
-
-
-def validar_local(local):
-    """Aceita vazio, um local da lista ou vários locais da lista separados por ' / '."""
-    local = chave_ambiente(local)
-    locais = ler_locais()
-    if not local or local in locais:
-        return
-    fora = [p for p in (x.strip() for x in local.split(' / ')) if p and p not in locais]
-    if fora:
-        raise LocalInvalido('Local fora da lista oficial: ' + ', '.join(fora) +
-                            '. Para incluir um local novo, edite o arquivo locais.json.')
-
-
-def chave_ambiente(local):
-    return re.sub(r'\s+', ' ', local or '').strip()
-
-
-def montar_evento(ev, mes_bloco):
-    c = ev['campos']
-    datas = interpretar_periodo(c['A'])
-    return {
-        'linha': ev['linha'],
-        'campos': c,
-        'datas': [d.isoformat() for d in datas],
-        'horarios': interpretar_horario(c['I']),
-        'virtual': e_virtual(c),
-        'ambiente': chave_ambiente(c['N']),
-        'suspenso': 'suspens' in c['O'].lower() or 'cancelad' in c['O'].lower(),
-        'mes_bloco': mes_bloco,
-    }
-
-
-def listar():
-    eventos, cabecalhos, mtime = planilha.ler()
-    saida = []
-    for ev in eventos:
-        anteriores = [r for r in cabecalhos if r < ev['linha']]
-        mes = cabecalhos[max(anteriores)] if anteriores else None
-        saida.append(montar_evento(ev, mes))
-    return {
-        'arquivo': os.path.basename(planilha.caminho),
-        'modificado': mtime,
-        'campos': CAMPOS,
-        'meses': MESES,
-        'locais': ler_locais(),
-        'eventos': saida,
-    }
+def dados():
+    con = db.conectar()
+    try:
+        return {'eventos': db.listar_eventos(con), 'locais': db.listar_locais(con)}
+    finally:
+        con.close()
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write('[%s] %s\n' % (self.log_date_time_string(), fmt % args))
 
-    def _json(self, status, dados):
-        corpo = json.dumps(dados, ensure_ascii=False).encode('utf-8')
+    def _enviar(self, status, corpo, tipo, extra=None):
         self.send_response(status)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Type', tipo)
         self.send_header('Content-Length', str(len(corpo)))
         self.send_header('Cache-Control', 'no-store')
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(corpo)
 
+    def _json(self, status, obj):
+        self._enviar(status, json.dumps(obj, ensure_ascii=False).encode('utf-8'), 'application/json; charset=utf-8')
+
     def _corpo(self):
         n = int(self.headers.get('Content-Length') or 0)
-        return json.loads(self.rfile.read(n) or b'{}') if n else {}
+        return json.loads(self.rfile.read(n)) if n else {}
 
     def _origem_ok(self):
-        # Bloqueia requisições de escrita vindas de outros sites abertos no navegador.
+        # Bloqueia escritas disparadas por outros sites abertos no navegador.
         origem = self.headers.get('Origin')
-        host = self.headers.get('Host', '')
-        return origem is None or urlparse(origem).netloc == host
+        return origem is None or urlparse(origem).netloc == self.headers.get('Host', '')
+
+    def _escrita(self, acao):
+        if not self._origem_ok():
+            return self._json(403, {'erro': 'origem não permitida'})
+        try:
+            ident = acao(self._corpo())
+            return self._json(200, {'ok': True, 'id': ident, **dados()})
+        except db.ErroValidacao as e:
+            return self._json(422, {'erro': str(e)})
+        except db.ConflitoVersao as e:
+            return self._json(409, {'erro': str(e)})
+        except Exception as e:
+            return self._json(500, {'erro': f'Falha ao gravar: {e}'})
+
+    def _rota(self):
+        caminho = urlparse(self.path).path
+        m = re.fullmatch(r'/api/(eventos|locais)(?:/(\d+))?', caminho)
+        return caminho, (m.group(1), int(m.group(2)) if m.group(2) else None) if m else (None, None)
 
     def do_GET(self):
-        caminho = urlparse(self.path).path
-        if caminho == '/api/eventos':
-            try:
-                return self._json(200, listar())
-            except Exception as e:  # planilha aberta/corrompida etc.
-                return self._json(500, {'erro': f'Não foi possível ler a planilha: {e}'})
+        caminho, _ = self._rota()
+        if caminho == '/api/dados':
+            return self._json(200, dados())
+        if caminho == '/api/exportar.xlsx':
+            d = dados()
+            arquivo = exportar.gerar_xlsx(d['eventos'], d['locais'])
+            nome = f"PAC 2026 - exportado {datetime.now().strftime('%Y-%m-%d %Hh%M')}.xlsx"
+            return self._enviar(200, arquivo,
+                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                {'Content-Disposition': f"attachment; filename*=UTF-8''{_url(nome)}"})
         if caminho == '/':
             caminho = '/index.html'
         arq = os.path.normpath(os.path.join(ESTATICOS, caminho.lstrip('/')))
         if not arq.startswith(ESTATICOS + os.sep) or not os.path.isfile(arq):
             return self._json(404, {'erro': 'não encontrado'})
         with open(arq, 'rb') as f:
-            dados = f.read()
-        self.send_response(200)
-        self.send_header('Content-Type', TIPOS.get(os.path.splitext(arq)[1], 'application/octet-stream'))
-        self.send_header('Content-Length', str(len(dados)))
-        self.send_header('Cache-Control', 'no-store')
-        self.end_headers()
-        self.wfile.write(dados)
-
-    def _escrita(self, acao):
-        if not self._origem_ok():
-            return self._json(403, {'erro': 'origem não permitida'})
-        try:
-            corpo = self._corpo()
-            linha = acao(corpo)
-            return self._json(200, {'ok': True, 'linha': linha, **listar()})
-        except ConflitoEdicao as e:
-            return self._json(409, {'erro': str(e)})
-        except LocalInvalido as e:
-            return self._json(422, {'erro': str(e)})
-        except PermissionError:
-            return self._json(423, {'erro': 'A planilha está bloqueada. Feche-a no Excel e tente de novo.'})
-        except Exception as e:
-            return self._json(500, {'erro': f'Falha ao gravar: {e}'})
+            self._enviar(200, f.read(), TIPOS.get(os.path.splitext(arq)[1], 'application/octet-stream'))
 
     def do_POST(self):
-        caminho = urlparse(self.path).path
+        caminho, (recurso, ident) = self._rota()
         if caminho == '/api/interpretar':
             corpo = self._corpo()
-            return self._json(200, {
-                'datas': [d.isoformat() for d in interpretar_periodo(corpo.get('periodo', ''))],
-                'horarios': interpretar_horario(corpo.get('horario', '')),
-            })
-        if caminho == '/api/eventos':
-            def criar(corpo):
-                campos = corpo.get('campos', {})
-                validar_local(campos.get('N', ''))
-                datas = interpretar_periodo(campos.get('A', ''))
-                mes = datas[0].month if datas else corpo.get('mes')
-                return planilha.criar(campos, mes)
-            return self._escrita(criar)
+            return self._json(200, {'datas': [d.isoformat() for d in interpretar_periodo(corpo.get('texto', ''))]})
+        if recurso == 'eventos' and ident is None:
+            return self._escrita(lambda c: db.criar_evento(c.get('evento', {}), c.get('sessoes', [])))
+        if recurso == 'locais' and ident is None:
+            return self._escrita(db.criar_local)
         return self._json(404, {'erro': 'não encontrado'})
 
     def do_PUT(self):
-        m = re.fullmatch(r'/api/eventos/(\d+)', urlparse(self.path).path)
-        if not m:
-            return self._json(404, {'erro': 'não encontrado'})
-        r = int(m.group(1))
-        def atualizar(corpo):
-            original, campos = corpo.get('original', {}), corpo.get('campos', {})
-            # Locais antigos fora da lista continuam aceitos enquanto não forem alterados.
-            if campos.get('N', '') != original.get('N', ''):
-                validar_local(campos.get('N', ''))
-            return planilha.atualizar(r, original, campos)
-        return self._escrita(atualizar)
+        _, (recurso, ident) = self._rota()
+        if recurso == 'eventos' and ident:
+            return self._escrita(lambda c: db.atualizar_evento(
+                ident, c.get('versao'), c.get('evento', {}), c.get('sessoes', []), bool(c.get('manter_revisao'))))
+        if recurso == 'locais' and ident:
+            return self._escrita(lambda c: db.atualizar_local(ident, c))
+        return self._json(404, {'erro': 'não encontrado'})
 
     def do_DELETE(self):
-        m = re.fullmatch(r'/api/eventos/(\d+)', urlparse(self.path).path)
-        if not m:
-            return self._json(404, {'erro': 'não encontrado'})
-        r = int(m.group(1))
-        return self._escrita(lambda c: planilha.excluir(r, c.get('original', {})))
+        _, (recurso, ident) = self._rota()
+        if recurso == 'eventos' and ident:
+            return self._escrita(lambda c: db.excluir_evento(ident, c.get('versao')))
+        if recurso == 'locais' and ident:
+            return self._escrita(lambda c: db.excluir_local(ident))
+        return self._json(404, {'erro': 'não encontrado'})
+
+
+def _url(texto):
+    from urllib.parse import quote
+    return quote(texto)
 
 
 def main():
-    global planilha
-    ap = argparse.ArgumentParser(description='Calendário do PAC')
-    ap.add_argument('planilha', nargs='?', default=PLANILHA_PADRAO)
-    ap.add_argument('--porta', type=int, default=8765)
+    ap = argparse.ArgumentParser(description='Calendário PAC v2')
+    ap.add_argument('--porta', type=int, default=8766)
     ap.add_argument('--sem-navegador', action='store_true')
     args = ap.parse_args()
-    caminho = os.path.abspath(args.planilha)
-    if not os.path.isfile(caminho):
-        sys.exit(f'Planilha não encontrada: {caminho}')
-    planilha = Planilha(caminho, os.path.join(AQUI, 'backups'))
-    planilha.ler()  # valida a aba PAC antes de subir
+    con = db.conectar()
+    vazio = con.execute('SELECT COUNT(*) FROM evento').fetchone()[0] == 0
+    con.close()
+    if vazio:
+        import importar
+        r = importar.importar(importar.PLANILHA_PADRAO)
+        print(f"Primeira execução: importados {r['eventos']} eventos da planilha.")
+    db.backup(forcar=True)
     url = f'http://localhost:{args.porta}'
     servidor = ThreadingHTTPServer(('127.0.0.1', args.porta), Handler)
-    print(f'Calendário PAC em {url}\nPlanilha: {caminho}\nCtrl+C para encerrar.')
+    print(f'Calendário PAC v2 em {url}\nBanco: {db.CAMINHO_DB}\nCtrl+C para encerrar.', flush=True)
     if not args.sem_navegador:
         webbrowser.open(url)
     try:

@@ -3,14 +3,17 @@
 const NOMES_MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho',
   'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 const DIAS_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-const SEM_LOCAL = 'Sem local definido';
-// Ordem e largura dos campos no formulário.
-const LAYOUT = [
-  ['C', true, 'textarea'], ['A', false], ['I', false], ['N', true], ['M', false], ['K', false],
-  ['B', false], ['E', false], ['F', false], ['H', false], ['G', true], ['L', true], ['J', false],
-  ['O', true, 'textarea'],
+const SEM_LOCAL = 'sem-local';
+const TIPOS_LOCAL = { fisico: 'Físico', virtual: 'Virtual', externo: 'Externo' };
+// [campo, rótulo, classe, datalist]
+const CAMPOS = [
+  ['nome', 'EVENTO', 'largo', null, 'textarea'],
+  ['proad', 'PROAD'], ['area', 'ÁREA', '', 'dlAreas'], ['origem', 'ORIGEM DOS RECURSOS', '', 'dlOrigens'],
+  ['modalidade', 'MODALIDADE', '', 'dlModalidades'], ['carga_horaria', 'CARGA HORÁRIA'], ['diarias', 'DIÁRIAS?'],
+  ['instrutor', 'INSTRUTOR / CONTEUDISTA / TUTOR', 'duplo'], ['parceria', 'PARCERIA'],
+  ['publico', 'PÚBLICO ALVO', 'duplo'], ['situacao', 'SITUAÇÃO', '', 'dlSituacoes'],
+  ['observacoes', 'OBSERVAÇÕES', 'largo', null, 'textarea'],
 ];
-const DATALISTS = { M: 'dlModalidades', E: 'dlAreas', F: 'dlOrigens' };
 
 const estado = {
   dados: null,
@@ -21,42 +24,35 @@ const estado = {
   busca: '',
   mostrarVirtual: lerPref('virtual', '1') === '1',
   mostrarSuspensos: true,
+  todoAno: false,
   editando: null,
 };
 
-const $ = (s) => document.querySelector(s);
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
 function lerPref(k, padrao) {
-  try { return localStorage.getItem('pac.' + k) ?? padrao; } catch { return padrao; }
+  try { return localStorage.getItem('pac2.' + k) ?? padrao; } catch { return padrao; }
 }
 function gravarPref(k, v) {
-  try { localStorage.setItem('pac.' + k, v); } catch { /* sem armazenamento */ }
+  try { localStorage.setItem('pac2.' + k, v); } catch { /* sem armazenamento */ }
 }
-
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function iso(a, m, d) {
   return `${a}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
-function fmtData(isoStr) {
-  const [, m, d] = isoStr.split('-');
-  return `${d}/${m}`;
-}
-function hojeIso() {
-  const h = new Date();
-  return iso(h.getFullYear(), h.getMonth(), h.getDate());
-}
+function fmtData(s) { return `${s.slice(8, 10)}/${s.slice(5, 7)}`; }
+function hojeIso() { const h = new Date(); return iso(h.getFullYear(), h.getMonth(), h.getDate()); }
+function diaSemana(s) { return DIAS_SEMANA[new Date(s + 'T12:00').getDay()]; }
+function minutos(h) { const [a, b] = h.split(':'); return Number(a) * 60 + Number(b); }
+function fmtHora(h) { return h ? h.replace(':00', 'h').replace(':', 'h') : ''; }
+function faixa(s) { return s.inicio ? `${fmtHora(s.inicio)}–${fmtHora(s.fim)}` : ''; }
 
-// Cor estável por ambiente.
 const PALETA = ['#2f6fd6', '#d9480f', '#2b8a3e', '#ae3ec9', '#c2255c', '#0c8599', '#e67700',
   '#5f3dc4', '#5c940d', '#1864ab', '#a61e4d', '#087f5b', '#862e9c', '#b35900'];
-function corAmbiente(nome) {
-  if (!nome) return '#868e96';
-  let h = 0;
-  for (const ch of nome) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return PALETA[h % PALETA.length];
-}
+function cor(id) { return id ? PALETA[id % PALETA.length] : '#868e96'; }
 
 function aviso(msg, erro = false) {
   const el = $('#aviso');
@@ -77,134 +73,159 @@ async function api(metodo, url, corpo) {
   return dados;
 }
 
+// ---------- dados derivados ----------
+function aplicarDados(d) {
+  estado.dados = d;
+  estado.locais = new Map(d.locais.map((l) => [l.id, l]));
+  for (const ev of d.eventos) {
+    ev.suspenso = /suspens|cancelad/i.test(ev.situacao);
+    ev.virtualMod = /ead|online|telepresencial/i.test(ev.modalidade) && !/híbrido|hibrido/i.test(ev.modalidade);
+    ev.datas = [...new Set(ev.sessoes.map((s) => s.data))].sort();
+    ev.texto = [ev.nome, ev.proad, ev.instrutor, ev.publico, ev.parceria, ev.area, ev.modalidade, ev.situacao, ev.observacoes,
+      ...ev.sessoes.map((s) => estado.locais.get(s.local_id)?.nome || '')].join(' ').toLowerCase();
+  }
+  $('#resumo').textContent = `${d.eventos.length} eventos · ${d.locais.filter((l) => l.ativo).length} locais ativos`;
+  preencherListas();
+  render();
+  abrirPorUrl();
+}
+
 async function carregar() {
   try {
-    aplicarDados(await api('GET', '/api/eventos'));
+    aplicarDados(await api('GET', '/api/dados'));
   } catch (e) {
     $('#vista').innerHTML = `<div class="carregando">${esc(e.message)}</div>`;
   }
 }
 
-function aplicarDados(dados) {
-  estado.dados = dados;
-  $('#arquivo').textContent = `${dados.arquivo} · aba PAC · ${dados.eventos.length} eventos`;
-  preencherListas();
-  render();
-  // Link direto: ?evento=<linha> abre o evento no mês dele.
-  const linha = new URLSearchParams(location.search).get('evento');
-  if (linha && !aplicarDados.abriu) {
-    aplicarDados.abriu = true;
-    const ev = eventoPorLinha(linha);
-    if (ev) {
-      if (ev.datas.length) { [estado.ano, estado.mes] = [Number(ev.datas[0].slice(0, 4)), Number(ev.datas[0].slice(5, 7)) - 1]; render(); }
-      if ($('#ajuda').open) $('#ajuda').close();
-      abrirModal(ev);
-    }
-  }
+function tipoSessao(s, ev) {
+  const l = estado.locais.get(s.local_id);
+  if (l) return l.tipo;
+  return ev.virtualMod ? 'virtual' : 'sem';
 }
 
-// ---------- filtros e conflitos ----------
-// Eventos presenciais em vários ambientes usam "Ambiente A / Ambiente B".
-// Plataformas EaD (ex.: "ENAP / Justrabalho") não são divididas.
-function partesLocal(ev) {
-  if (!ev.ambiente) return [];
-  if (ev.virtual) return [ev.ambiente];
-  return ev.ambiente.split(' / ').map((p) => p.trim()).filter(Boolean);
-}
-
-function visivel(ev) {
-  if (!estado.mostrarVirtual && ev.virtual) return false;
-  if (!estado.mostrarSuspensos && ev.suspenso) return false;
+function sessaoVisivel(s, ev) {
+  if (!estado.mostrarVirtual && tipoSessao(s, ev) === 'virtual') return false;
   if (estado.filtroAmbiente) {
-    const ok = estado.filtroAmbiente === SEM_LOCAL ? !ev.ambiente : partesLocal(ev).includes(estado.filtroAmbiente);
-    if (!ok) return false;
-  }
-  if (estado.busca) {
-    const alvo = Object.values(ev.campos).join(' ').toLowerCase();
-    if (!estado.busca.split(/\s+/).every((p) => alvo.includes(p))) return false;
+    if (estado.filtroAmbiente === SEM_LOCAL) return !s.local_id;
+    return String(s.local_id) === estado.filtroAmbiente;
   }
   return true;
 }
 
+function eventoVisivel(ev) {
+  if (!estado.mostrarSuspensos && ev.suspenso) return false;
+  if (estado.busca && !estado.busca.split(/\s+/).every((p) => ev.texto.includes(p))) return false;
+  return true;
+}
+
 function sobrepoe(a, b) {
-  if (!a.horarios.length || !b.horarios.length) return true;
-  return a.horarios.some(([i1, f1]) => b.horarios.some(([i2, f2]) => i1 < f2 && i2 < f1));
+  if (!a.inicio || !b.inicio) return true;
+  return minutos(a.inicio) < minutos(b.fim) && minutos(b.inicio) < minutos(a.fim);
 }
 
-function participaDeConflito(ev) {
-  return !ev.virtual && !ev.suspenso && ev.ambiente;
-}
-
-// Mapa data -> lista de pares [a, b] em conflito.
+// Lista de conflitos entre sessões de eventos diferentes no mesmo local físico.
 function calcularConflitos(eventos) {
-  const porDiaAmb = new Map();
+  const grupos = new Map();
   for (const ev of eventos) {
-    if (!participaDeConflito(ev)) continue;
-    for (const d of ev.datas) {
-      const k = d + '|' + ev.ambiente.toLowerCase();
-      if (!porDiaAmb.has(k)) porDiaAmb.set(k, []);
-      porDiaAmb.get(k).push(ev);
+    if (ev.suspenso) continue;
+    for (const s of ev.sessoes) {
+      if (estado.locais.get(s.local_id)?.tipo !== 'fisico') continue;
+      const k = s.data + '|' + s.local_id;
+      if (!grupos.has(k)) grupos.set(k, []);
+      grupos.get(k).push({ ev, s });
     }
   }
-  const conflitos = [];
-  for (const [k, lista] of porDiaAmb) {
-    if (lista.length < 2) continue;
-    const [data] = k.split('|');
+  const out = [];
+  for (const lista of grupos.values()) {
     for (let i = 0; i < lista.length; i++) {
       for (let j = i + 1; j < lista.length; j++) {
-        if (sobrepoe(lista[i], lista[j])) conflitos.push({ data, ambiente: lista[i].ambiente, a: lista[i], b: lista[j] });
+        const a = lista[i], b = lista[j];
+        if (a.ev === b.ev || !sobrepoe(a.s, b.s)) continue;
+        out.push({ data: a.s.data, local_id: a.s.local_id, a, b });
       }
     }
   }
-  return conflitos.sort((x, y) => x.data.localeCompare(y.data));
+  return out.sort((x, y) => x.data.localeCompare(y.data));
 }
 
 // ---------- renderização ----------
 function render() {
   if (!estado.dados) return;
   $('#tituloMes').textContent = `${NOMES_MES[estado.mes]} ${estado.ano}`;
-  document.querySelectorAll('.alternador button').forEach((b) => b.classList.toggle('ativo', b.dataset.vista === estado.vista));
-
+  $$('.alternador button').forEach((b) => b.classList.toggle('ativo', b.dataset.vista === estado.vista));
+  $('#rotuloTodoAno').hidden = estado.vista !== 'lista';
   const prefixo = iso(estado.ano, estado.mes, 1).slice(0, 7);
-  const todos = estado.dados.eventos;
-  const conflitos = calcularConflitos(todos).filter((c) => c.data.startsWith(prefixo));
-  const emConflito = new Set();
-  const diasConflito = new Set();
+  const conflitos = calcularConflitos(estado.dados.eventos).filter((c) => c.data.startsWith(prefixo));
+  const marcados = new Set();
+  const celulas = new Set();
   for (const c of conflitos) {
-    emConflito.add(c.a.linha + '|' + c.data);
-    emConflito.add(c.b.linha + '|' + c.data);
-    diasConflito.add(c.data + '|' + c.ambiente.toLowerCase());
-    diasConflito.add(c.data);
+    marcados.add(c.a.ev.id + '|' + c.data + '|' + c.local_id);
+    marcados.add(c.b.ev.id + '|' + c.data + '|' + c.local_id);
+    celulas.add(c.data + '|' + c.local_id);
+    celulas.add(c.data);
   }
-  const doMes = todos.filter((ev) => visivel(ev) && ev.datas.some((d) => d.startsWith(prefixo)));
-  const ctx = { prefixo, doMes, emConflito, diasConflito };
-  if (estado.vista === 'mes') renderMes(ctx); else renderAmbientes(ctx);
+  const ctx = { prefixo, marcados, celulas, eventos: estado.dados.eventos.filter(eventoVisivel) };
+  if (estado.vista === 'mes') renderMes(ctx);
+  else if (estado.vista === 'lista') renderLista(ctx);
+  else renderAmbientes(ctx);
   renderLateral(conflitos);
 }
 
-function chip(ev, data, ctx, mostrarLocal) {
+// Agrupa as sessões visíveis do mês: chave -> [{ev, sessoes}]
+function agrupar(ctx, chaveFn) {
+  const mapa = new Map();
+  for (const ev of ctx.eventos) {
+    for (const s of ev.sessoes) {
+      if (!s.data.startsWith(ctx.prefixo) || !sessaoVisivel(s, ev)) continue;
+      const k = chaveFn(s, ev);
+      if (!mapa.has(k)) mapa.set(k, new Map());
+      const porEv = mapa.get(k);
+      if (!porEv.has(ev.id)) porEv.set(ev.id, { ev, sessoes: [] });
+      porEv.get(ev.id).sessoes.push(s);
+    }
+  }
+  return mapa;
+}
+
+function chip({ ev, sessoes }, ctx, mostrarLocal) {
+  const s0 = sessoes[0];
   const classes = ['chip'];
-  if (ev.virtual) classes.push('virtual');
+  if (tipoSessao(s0, ev) === 'virtual') classes.push('virtual');
   if (ev.suspenso) classes.push('suspenso');
-  if (ctx.emConflito.has(ev.linha + '|' + data)) classes.push('em-conflito');
-  const extra = [ev.campos.I.split('\n')[0], mostrarLocal ? (ev.ambiente || SEM_LOCAL) : ''].filter(Boolean).join(' · ');
-  const titulo = `${ev.campos.C}\n${ev.campos.A}\n${ev.campos.I || 'sem horário'}\n${ev.ambiente || SEM_LOCAL}`;
-  return `<button type="button" class="${classes.join(' ')}" style="--cor:${corAmbiente(ev.ambiente)}" data-linha="${ev.linha}" title="${esc(titulo)}">`
-    + `<span class="t">${esc(ev.campos.C)}</span>`
-    + (extra ? `<span class="h">${esc(extra)}</span>` : '') + '</button>';
+  if (ev.revisar) classes.push('revisar');
+  if (sessoes.some((s) => ctx.marcados.has(ev.id + '|' + s.data + '|' + s.local_id))) classes.push('em-conflito');
+  const horas = [...new Set(sessoes.map(faixa).filter(Boolean))].join(', ');
+  const locais = [...new Set(sessoes.map((s) => estado.locais.get(s.local_id)?.nome || 'sem local'))].join(' / ');
+  const extra = [horas, mostrarLocal ? locais : ''].filter(Boolean).join(' · ');
+  const titulo = `${ev.nome}\n${horas || 'sem horário'}\n${locais}`;
+  return `<button type="button" class="${classes.join(' ')}" style="--cor:${cor(s0.local_id)}" data-evento="${ev.id}" title="${esc(titulo)}">`
+    + `<span class="t">${esc(ev.nome)}</span>${extra ? `<span class="h">${esc(extra)}</span>` : ''}</button>`;
+}
+
+function porHorario(a, b) {
+  return (a.sessoes[0].inicio || '99').localeCompare(b.sessoes[0].inicio || '99') || a.ev.nome.localeCompare(b.ev.nome);
 }
 
 function renderAmbientes(ctx) {
   const dias = new Date(estado.ano, estado.mes + 1, 0).getDate();
   const hoje = hojeIso();
-  const grupos = { fisico: new Map(), semLocal: new Map(), virtual: new Map() };
-  for (const ev of ctx.doMes) {
-    const g = ev.virtual ? 'virtual' : (ev.ambiente ? 'fisico' : 'semLocal');
-    const nome = ev.ambiente || SEM_LOCAL;
-    if (!grupos[g].has(nome)) grupos[g].set(nome, []);
-    grupos[g].get(nome).push(ev);
+  const mapa = agrupar(ctx, (s) => s.data + '|' + (s.local_id || SEM_LOCAL));
+  const usados = new Map();
+  for (const k of mapa.keys()) {
+    const lid = k.split('|')[1];
+    usados.set(lid, (usados.get(lid) || 0) + mapa.get(k).size);
   }
-  // table-layout: fixed só respeita as larguras das colunas com largura total explícita.
+  const ordem = { fisico: 0, externo: 1, sem: 2, virtual: 3 };
+  const secoes = { 0: 'Ambientes físicos', 1: 'Locais externos', 2: 'Sem local definido', 3: 'EaD / online' };
+  const linhas = [...usados.keys()].map((lid) => {
+    const l = estado.locais.get(Number(lid));
+    return { lid, nome: l ? l.nome : 'Sem local definido', grupo: ordem[l ? l.tipo : 'sem'], n: usados.get(lid) };
+  }).sort((a, b) => a.grupo - b.grupo || b.n - a.n || a.nome.localeCompare(b.nome));
+  if (!linhas.length) {
+    $('#vista').innerHTML = '<div class="carregando">Nenhum evento neste mês para os filtros atuais.</div>';
+    return;
+  }
   let h = `<table class="ambientes" style="width:${210 + 108 * dias}px"><thead><tr><th class="nome">Ambiente</th>`;
   for (let d = 1; d <= dias; d++) {
     const dt = new Date(estado.ano, estado.mes, d);
@@ -212,33 +233,29 @@ function renderAmbientes(ctx) {
     h += `<th class="${cls}"><span class="dia">${d}</span>${DIAS_SEMANA[dt.getDay()]}</th>`;
   }
   h += '</tr></thead><tbody>';
-  const secoes = [['Ambientes físicos', grupos.fisico], ['Presencial sem local informado', grupos.semLocal], ['EaD / online', grupos.virtual]];
-  let algum = false;
-  for (const [titulo, mapa] of secoes) {
-    if (!mapa.size) continue;
-    algum = true;
-    h += `<tr class="grupo"><th>${titulo}</th><td colspan="${dias}"></td></tr>`;
-    const nomes = [...mapa.keys()].sort((a, b) => mapa.get(b).length - mapa.get(a).length || a.localeCompare(b));
-    for (const nome of nomes) {
-      const evs = mapa.get(nome);
-      const amb = nome === SEM_LOCAL ? '' : nome;
-      h += `<tr><th class="nome" style="--cor:${corAmbiente(amb)}"><span class="bolinha"></span>${esc(nome)}</th>`;
-      for (let d = 1; d <= dias; d++) {
-        const data = iso(estado.ano, estado.mes, d);
-        const dt = new Date(estado.ano, estado.mes, d);
-        const doDia = evs.filter((ev) => ev.datas.includes(data));
-        const cls = [dt.getDay() % 6 === 0 ? 'fds' : '', data === hoje ? 'hoje' : '',
-          amb && ctx.diasConflito.has(data + '|' + amb.toLowerCase()) ? 'conflito' : ''].join(' ');
-        h += `<td class="${cls}" data-data="${data}" data-local="${esc(amb)}">${doDia.map((ev) => chip(ev, data, ctx, false)).join('')}</td>`;
-      }
-      h += '</tr>';
+  let grupoAtual = -1;
+  for (const ln of linhas) {
+    if (ln.grupo !== grupoAtual) {
+      grupoAtual = ln.grupo;
+      h += `<tr class="grupo"><th>${secoes[ln.grupo]}</th><td colspan="${dias}"></td></tr>`;
     }
+    const idNum = ln.lid === SEM_LOCAL ? null : Number(ln.lid);
+    h += `<tr><th class="nome" style="--cor:${cor(idNum)}"><span class="bolinha"></span>${esc(ln.nome)}</th>`;
+    for (let d = 1; d <= dias; d++) {
+      const data = iso(estado.ano, estado.mes, d);
+      const dt = new Date(estado.ano, estado.mes, d);
+      const itens = [...(mapa.get(data + '|' + ln.lid)?.values() || [])].sort(porHorario);
+      const cls = [dt.getDay() % 6 === 0 ? 'fds' : '', data === hoje ? 'hoje' : '',
+        ctx.celulas.has(data + '|' + idNum) ? 'conflito' : ''].join(' ');
+      h += `<td class="${cls}" data-data="${data}" data-local="${idNum ?? ''}">${itens.map((it) => chip(it, ctx, false)).join('')}</td>`;
+    }
+    h += '</tr>';
   }
-  h += '</tbody></table>';
-  $('#vista').innerHTML = algum ? h : '<div class="carregando">Nenhum evento com data neste mês para os filtros atuais.</div>';
+  $('#vista').innerHTML = h + '</tbody></table>';
 }
 
 function renderMes(ctx) {
+  const mapa = agrupar(ctx, (s) => s.data);
   const primeiro = new Date(estado.ano, estado.mes, 1);
   const inicio = new Date(primeiro);
   inicio.setDate(1 - primeiro.getDay());
@@ -250,187 +267,208 @@ function renderMes(ctx) {
     if (i === 35 && dt.getMonth() !== estado.mes) break;
     const data = iso(dt.getFullYear(), dt.getMonth(), dt.getDate());
     const fora = dt.getMonth() !== estado.mes;
-    const evs = fora ? [] : ctx.doMes.filter((ev) => ev.datas.includes(data));
-    evs.sort((a, b) => (a.virtual - b.virtual) || (a.ambiente || '~').localeCompare(b.ambiente || '~'));
-    const conflito = !fora && ctx.diasConflito.has(data);
+    const itens = fora ? [] : [...(mapa.get(data)?.values() || [])].sort(porHorario);
+    const conflito = !fora && ctx.celulas.has(data);
     const cls = ['dia', fora ? 'fora' : '', dt.getDay() % 6 === 0 ? 'fds' : '', data === hoje ? 'hoje' : '', conflito ? 'conflito' : ''].join(' ');
     h += `<div class="${cls}" data-data="${fora ? '' : data}"><div class="num"><span>${dt.getDate()}</span>`
       + (conflito ? '<span class="alerta">⚠ conflito</span>' : '') + '</div>'
-      + evs.map((ev) => chip(ev, data, ctx, true)).join('') + '</div>';
+      + itens.map((it) => chip(it, ctx, true)).join('') + '</div>';
   }
   $('#vista').innerHTML = h + '</div>';
 }
 
+function textoDatas(datas) {
+  if (!datas.length) return '—';
+  if (datas.length <= 4) return datas.map(fmtData).join(', ');
+  return `${fmtData(datas[0])} a ${fmtData(datas.at(-1))} (${datas.length} dias)`;
+}
+
+function renderLista(ctx) {
+  const evs = ctx.eventos.filter((ev) => {
+    const ss = ev.sessoes.filter((s) => sessaoVisivel(s, ev) && (estado.todoAno || s.data.startsWith(ctx.prefixo)));
+    if (ss.length) return true;
+    // Eventos sem data aparecem no mês de referência (ou sempre, no ano inteiro).
+    return !ev.sessoes.length && !estado.filtroAmbiente && (estado.todoAno || ev.mes_referencia === estado.mes + 1);
+  }).sort((a, b) => (a.datas[0] || '9999').localeCompare(b.datas[0] || '9999') || a.nome.localeCompare(b.nome));
+  if (!evs.length) {
+    $('#vista').innerHTML = '<div class="carregando">Nenhum evento para os filtros atuais.</div>';
+    return;
+  }
+  const conflEv = new Set(calcularConflitos(estado.dados.eventos).flatMap((c) => [c.a.ev.id, c.b.ev.id]));
+  let h = '<table class="tabela"><thead><tr><th>Datas</th><th>Evento</th><th>Local(is)</th><th>Horário</th><th>Modalidade</th><th>Situação</th></tr></thead><tbody>';
+  for (const ev of evs) {
+    const locais = [...new Set(ev.sessoes.map((s) => estado.locais.get(s.local_id)?.nome).filter(Boolean))];
+    const horas = [...new Set(ev.sessoes.map(faixa).filter(Boolean))];
+    const tags = (ev.revisar ? '<span class="etiqueta alerta">⚠ revisar</span>' : '')
+      + (conflEv.has(ev.id) ? '<span class="etiqueta perigo">conflito</span>' : '');
+    h += `<tr class="clicavel${ev.suspenso ? ' suspenso' : ''}" data-evento="${ev.id}"><td>${esc(textoDatas(ev.datas))}</td>`
+      + `<td>${esc(ev.nome)} ${tags}</td><td>${locais.map((l) => `<span class="etiqueta">${esc(l)}</span>`).join('') || '—'}</td>`
+      + `<td>${esc(horas.slice(0, 3).join(', ') + (horas.length > 3 ? '…' : '')) || '—'}</td>`
+      + `<td>${esc(ev.modalidade)}</td><td>${esc(ev.situacao)}</td></tr>`;
+  }
+  $('#vista').innerHTML = h + '</tbody></table>';
+}
+
 function renderLateral(conflitos) {
-  const lc = $('#listaConflitos');
+  const nomeLocal = (id) => estado.locais.get(id)?.nome || '';
   $('#qtdConflitos').textContent = conflitos.length;
   $('#qtdConflitos').classList.toggle('tem', conflitos.length > 0);
-  lc.innerHTML = conflitos.length ? conflitos.map((c) => `<li class="conflito"><strong>${fmtData(c.data)}</strong> · ${esc(c.ambiente)}<br>`
-    + `<a data-linha="${c.a.linha}">${esc(c.a.campos.C)}</a> <span class="sutil">(${esc(c.a.campos.I || 'sem horário')})</span><br>`
-    + `<a data-linha="${c.b.linha}">${esc(c.b.campos.C)}</a> <span class="sutil">(${esc(c.b.campos.I || 'sem horário')})</span></li>`).join('')
+  $('#listaConflitos').innerHTML = conflitos.length ? conflitos.map((c) => `<li class="conflito"><strong>${fmtData(c.data)}</strong> · ${esc(nomeLocal(c.local_id))}<br>`
+    + `<a data-evento="${c.a.ev.id}">${esc(c.a.ev.nome)}</a> <span class="sutil">(${esc(faixa(c.a.s) || 'sem horário')})</span><br>`
+    + `<a data-evento="${c.b.ev.id}">${esc(c.b.ev.nome)}</a> <span class="sutil">(${esc(faixa(c.b.s) || 'sem horário')})</span></li>`).join('')
     : '<li class="vazio">Nenhum conflito neste mês.</li>';
 
-  const semData = estado.dados.eventos.filter((ev) => !ev.datas.length && ev.mes_bloco === estado.mes + 1 && visivel(ev));
+  const semData = estado.dados.eventos.filter((ev) => !ev.sessoes.length && ev.mes_referencia === estado.mes + 1 && eventoVisivel(ev));
   $('#qtdSemData').textContent = semData.length;
-  $('#listaSemData').innerHTML = semData.length ? semData.map((ev) => `<li><a data-linha="${ev.linha}">${esc(ev.campos.C || '(sem nome)')}</a>`
-    + `<br><span class="sutil">Linha ${ev.linha} · Período: ${esc(ev.campos.A || 'vazio')}</span></li>`).join('')
-    : '<li class="vazio">Todos os eventos deste mês têm data.</li>';
+  $('#listaSemData').innerHTML = semData.length ? semData.map((ev) => `<li><a data-evento="${ev.id}">${esc(ev.nome)}</a></li>`).join('')
+    : '<li class="vazio">Todos os eventos deste mês têm datas.</li>';
+
+  const revisar = estado.dados.eventos.filter((ev) => ev.revisar);
+  $('#qtdRevisar').textContent = revisar.length;
+  $('#listaRevisar').innerHTML = revisar.length ? revisar.map((ev) => `<li class="revisar"><a data-evento="${ev.id}">${esc(ev.nome)}</a>`
+    + `<br><span class="sutil">${esc(textoDatas(ev.datas))}</span></li>`).join('')
+    : '<li class="vazio">Nada a revisar.</li>';
 }
 
 function preencherListas() {
   const evs = estado.dados.eventos;
-  const contar = (col) => {
+  const unicos = (campo) => {
     const m = new Map();
-    for (const ev of evs) {
-      const valores = col === 'N' ? partesLocal(ev) : [ev.campos[col].trim()];
-      for (const v of valores) if (v) m.set(v, (m.get(v) || 0) + 1);
-    }
-    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([v]) => v);
+    for (const ev of evs) { const v = ev[campo].trim(); if (v) m.set(v, (m.get(v) || 0) + 1); }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([v]) => v);
   };
-  for (const [col, id] of Object.entries(DATALISTS)) {
-    $('#' + id).innerHTML = contar(col).map((v) => `<option value="${esc(v)}">`).join('');
+  for (const [campo, id] of [['modalidade', 'dlModalidades'], ['area', 'dlAreas'], ['origem', 'dlOrigens'], ['situacao', 'dlSituacoes']]) {
+    $('#' + id).innerHTML = unicos(campo).map((v) => `<option value="${esc(v)}">`).join('');
   }
   const sel = $('#filtroAmbiente');
   const atual = estado.filtroAmbiente;
-  const ambientes = [...new Set(evs.flatMap((ev) => ev.ambiente ? partesLocal(ev) : [SEM_LOCAL]))].sort((a, b) => a.localeCompare(b));
-  sel.innerHTML = '<option value="">Todos os ambientes</option>' + ambientes.map((a) => `<option>${esc(a)}</option>`).join('');
-  sel.value = ambientes.includes(atual) ? atual : '';
+  const grupos = Object.entries(TIPOS_LOCAL).map(([tipo, rotulo]) => {
+    const ls = estado.dados.locais.filter((l) => l.tipo === tipo && (l.ativo || l.eventos));
+    return ls.length ? `<optgroup label="${rotulo}">${ls.map((l) => `<option value="${l.id}">${esc(l.nome)}</option>`).join('')}</optgroup>` : '';
+  }).join('');
+  sel.innerHTML = `<option value="">Todos os ambientes</option>${grupos}<option value="${SEM_LOCAL}">Sem local definido</option>`;
+  sel.value = $$('option', sel).some((o) => o.value === atual) ? atual : '';
   estado.filtroAmbiente = sel.value;
 }
 
-// ---------- formulário ----------
+// ---------- formulário de evento ----------
+function opcoesLocal(selecionado) {
+  const sel = selecionado == null ? '' : String(selecionado);
+  const grupos = Object.entries(TIPOS_LOCAL).map(([tipo, rotulo]) => {
+    const ls = estado.dados.locais.filter((l) => l.tipo === tipo && (l.ativo || String(l.id) === sel));
+    return ls.length ? `<optgroup label="${rotulo}">${ls.map((l) => `<option value="${l.id}"${String(l.id) === sel ? ' selected' : ''}>`
+      + `${esc(l.nome)}${l.ativo ? '' : ' (inativo)'}</option>`).join('')}</optgroup>` : '';
+  }).join('');
+  return `<option value="">— sem local —</option>${grupos}`;
+}
+
+function linhaSessao(s = {}) {
+  return `<tr><td><input type="date" name="data" value="${esc(s.data || '')}" required></td>`
+    + `<td class="semana">${s.data ? diaSemana(s.data) : ''}</td>`
+    + `<td><input type="time" name="inicio" value="${esc(s.inicio || '')}"></td>`
+    + `<td><input type="time" name="fim" value="${esc(s.fim || '')}"></td>`
+    + `<td><select name="local_id">${opcoesLocal(s.local_id)}</select></td>`
+    + '<td class="acoes-linha"><button type="button" class="icone" data-duplicar-linha title="Duplicar linha (outro turno ou outra sala no mesmo dia)">⧉</button> '
+    + '<button type="button" class="icone" data-remover-linha title="Remover linha">×</button></td></tr>';
+}
+
 function abrirModal(ev, preset = {}) {
   estado.editando = ev;
-  const campos = ev ? ev.campos : { ...Object.fromEntries(Object.keys(estado.dados.campos).map((c) => [c, ''])), ...preset };
+  const base = ev || { nome: '', proad: '', area: '', origem: '', modalidade: '', carga_horaria: '', diarias: '', instrutor: '',
+    parceria: '', publico: '', situacao: '', observacoes: '', mes_referencia: estado.mes + 1, sessoes: [] };
+  const dados = { ...base, ...preset };
   $('#tituloModal').textContent = ev ? 'Editar evento' : 'Novo evento';
-  $('#linhaModal').textContent = ev ? `Linha ${ev.linha} da aba PAC` : 'Será gravado numa linha vazia do mês correspondente';
+  $('#infoModal').textContent = ev ? (ev.linha_planilha ? `Importado da linha ${ev.linha_planilha} da planilha` : 'Criado no sistema') : '';
   $('#excluir').hidden = !ev;
-  $('#camposForm').innerHTML = LAYOUT.map(([col, largo, tipo]) => {
-    const rotulo = estado.dados.campos[col];
-    if (col === 'N') return campoLocal(rotulo, campos.N);
-    const lista = DATALISTS[col] ? ` list="${DATALISTS[col]}"` : '';
-    const dica = col === 'A' ? ' placeholder="ex.: 09/03, 10/03 e 11/03  ou  06 a 10/04"' : col === 'I' ? ' placeholder="ex.: 08h às 12h e 13h às 17h"' : '';
-    const campo = tipo === 'textarea' || campos[col].includes('\n')
-      ? `<textarea name="${col}" rows="2">${esc(campos[col])}</textarea>`
-      : `<input name="${col}" value="${esc(campos[col])}"${lista}${dica} autocomplete="off">`;
-    return `<label class="${largo ? 'largo' : ''}">${esc(rotulo)}${campo}</label>`;
-  }).join('');
-  $('#formEvento').oninput = (e) => { if (['A', 'I', 'N_parte', 'M', 'O'].includes(e.target.name)) previa(); };
+  $('#duplicar').hidden = !ev;
+  $('#caixaRevisar').innerHTML = ev?.revisar
+    ? `<div class="aviso-revisar"><b>⚠ Conferir importação:</b>\n${esc(ev.revisar)}<pre>Texto original na planilha:\n${esc(ev.origem_planilha)}</pre>`
+      + '<label><input type="checkbox" id="manterRevisao"> Manter marcado para revisar depois de salvar</label></div>'
+    : '';
+  $('#camposEvento').innerHTML = CAMPOS.map(([campo, rotulo, classe = '', lista, tipo]) => {
+    const v = esc(dados[campo] ?? '');
+    const el = tipo === 'textarea'
+      ? `<textarea name="${campo}" rows="2">${v}</textarea>`
+      : `<input name="${campo}" value="${v}"${lista ? ` list="${lista}"` : ''} autocomplete="off">`;
+    return `<label class="${classe}">${rotulo}${el}</label>`;
+  }).join('') + `<label>MÊS (enquanto não houver datas)<select name="mes_referencia">${NOMES_MES.map((m, i) =>
+    `<option value="${i + 1}"${dados.mes_referencia === i + 1 ? ' selected' : ''}>${m}</option>`).join('')}</select></label>`;
+  // Evento novo começa com uma linha em branco para a primeira data.
+  const sessoes = dados.sessoes.length || ev ? dados.sessoes : [{}];
+  $('#linhasSessoes').innerHTML = sessoes.map(linhaSessao).join('');
+  $('#variasDatas').value = '';
   previa();
   $('#modal').showModal();
-  $('#camposForm [name=C]').focus();
+  $('#camposEvento [name=nome]').focus();
 }
 
-function lerForm() {
+function lerSessoes() {
+  return $$('#linhasSessoes tr').map((tr) => ({
+    data: $('[name=data]', tr).value,
+    inicio: $('[name=inicio]', tr).value,
+    fim: $('[name=fim]', tr).value,
+    local_id: $('[name=local_id]', tr).value ? Number($('[name=local_id]', tr).value) : null,
+  }));
+}
+
+function lerEvento() {
   const f = new FormData($('#formEvento'));
-  const campos = Object.fromEntries(Object.keys(estado.dados.campos).map((c) => [c, (f.get(c) ?? '').toString()]));
-  const partes = [...new Set(f.getAll('N_parte').map(String).filter(Boolean))];
-  campos.N = partes.join(' / ');
-  // Sem alteração no local, preserva o texto original (inclusive grafias antigas).
-  const original = estado.editando?.campos.N ?? '';
-  if (estado.localOriginal && campos.N === estado.localOriginal.join(' / ')) campos.N = original;
-  return campos;
+  const ev = Object.fromEntries(CAMPOS.map(([c]) => [c, (f.get(c) ?? '').toString()]));
+  ev.mes_referencia = Number(f.get('mes_referencia'));
+  return ev;
 }
 
-// ---------- campo LOCAL (somente locais da lista oficial) ----------
-function separarLocal(texto) {
-  const v = texto.replace(/\s+/g, ' ').trim();
-  if (!v) return [];
-  if (estado.dados.locais.includes(v)) return [v];
-  return v.split(' / ').map((p) => p.trim()).filter(Boolean);
-}
-
-function opcoesLocal(selecionado) {
-  const locais = estado.dados.locais;
-  const extra = selecionado && !locais.includes(selecionado)
-    ? `<option value="${esc(selecionado)}" selected>⚠ ${esc(selecionado)} (fora da lista)</option>` : '';
-  return `<option value="">— selecione —</option>${extra}`
-    + locais.map((l) => `<option${l === selecionado ? ' selected' : ''}>${esc(l)}</option>`).join('');
-}
-
-function linhaLocal(valor, removivel) {
-  return `<div class="local-linha"><select name="N_parte">${opcoesLocal(valor)}</select>`
-    + (removivel ? '<button type="button" class="icone" data-remover-local aria-label="Remover ambiente">×</button>' : '') + '</div>';
-}
-
-function campoLocal(rotulo, valor) {
-  const partes = separarLocal(valor);
-  estado.localOriginal = partes;
-  const linhas = (partes.length ? partes : ['']).map((p, i) => linhaLocal(p, i > 0)).join('');
-  return `<div class="largo campo-local"><span class="rotulo">${esc(rotulo)}</span><div id="locaisSel">${linhas}</div>`
-    + '<button type="button" class="link" id="addLocal">+ outro ambiente (evento em mais de um local)</button></div>';
-}
-
-document.addEventListener('click', (e) => {
-  if (e.target.id === 'addLocal') {
-    $('#locaisSel').insertAdjacentHTML('beforeend', linhaLocal('', true));
-    [...document.querySelectorAll('#locaisSel select')].at(-1).focus();
-  } else if (e.target.matches('[data-remover-local]')) {
-    e.target.closest('.local-linha').remove();
-    previa();
-  }
-});
-
-async function previa() {
-  clearTimeout(previa.t);
-  previa.t = setTimeout(async () => {
-    const campos = lerForm();
-    let r;
-    try { r = await api('POST', '/api/interpretar', { periodo: campos.A, horario: campos.I }); } catch { return; }
-    const blocos = [];
-    if (!campos.A.trim()) {
-      blocos.push('<div class="bloco alerta">Sem PERÍODO: o evento não aparecerá no calendário (só na lista “Sem data reconhecida”).</div>');
-    } else if (!r.datas.length) {
-      blocos.push('<div class="bloco erro">Não consegui reconhecer datas neste PERÍODO. Use formatos como “09/03, 10/03 e 11/03” ou “06 a 10/04”.</div>');
-    } else {
-      const lista = r.datas.length > 14 ? r.datas.slice(0, 12).map(fmtData).join(', ') + ` … ${fmtData(r.datas.at(-1))}` : r.datas.map(fmtData).join(', ');
-      blocos.push(`<div class="bloco"><strong>${r.datas.length} dia(s) reconhecido(s):</strong> ${lista}`
-        + (campos.I.trim() && !r.horarios.length ? '<br><span class="sutil">Horário não reconhecido: conflitos serão avaliados para o dia inteiro.</span>' : '') + '</div>');
-      // Conflitos que este evento teria com os demais.
-      const ficticio = {
-        linha: estado.editando?.linha ?? -1, campos, datas: r.datas, horarios: r.horarios,
-        ambiente: campos.N.replace(/\s+/g, ' ').trim(),
-        virtual: eVirtual(campos), suspenso: /suspens|cancelad/i.test(campos.O),
-      };
-      if (participaDeConflito(ficticio)) {
-        const outros = estado.dados.eventos.filter((e) => e.linha !== ficticio.linha);
-        const achados = calcularConflitos([ficticio, ...outros]).filter((c) => c.a === ficticio || c.b === ficticio);
-        if (achados.length) {
-          blocos.push('<div class="bloco erro"><strong>⚠ Conflito de ambiente:</strong><br>' + achados.map((c) => {
-            const o = c.a === ficticio ? c.b : c.a;
-            return `${fmtData(c.data)} — ${esc(o.campos.C)} (${esc(o.campos.I || 'sem horário')})`;
-          }).join('<br>') + '</div>');
-        }
+function previa() {
+  const sessoes = lerSessoes();
+  const trs = $$('#linhasSessoes tr');
+  trs.forEach((tr, i) => {
+    $('.semana', tr).textContent = sessoes[i].data ? diaSemana(sessoes[i].data) : '';
+    tr.classList.remove('em-conflito');
+    tr.title = '';
+  });
+  const blocos = [];
+  const validas = sessoes.filter((s) => s.data);
+  if (!validas.length) {
+    blocos.push('<div class="bloco alerta">Sem datas: o evento ficará na lista “Sem data” do mês escolhido.</div>');
+  } else {
+    const dias = new Set(validas.map((s) => s.data)).size;
+    blocos.push(`<div class="bloco"><strong>${dias} dia(s), ${validas.length} sessão(ões).</strong></div>`);
+    const ficticio = { id: estado.editando?.id ?? -1, nome: lerEvento().nome, situacao: lerEvento().situacao, sessoes: validas, suspenso: /suspens|cancelad/i.test(lerEvento().situacao) };
+    const outros = estado.dados.eventos.filter((e) => e.id !== ficticio.id);
+    const achados = calcularConflitos([ficticio, ...outros]).filter((c) => c.a.ev === ficticio || c.b.ev === ficticio);
+    if (achados.length) {
+      const linhas = [];
+      for (const c of achados) {
+        const meu = c.a.ev === ficticio ? c.a : c.b;
+        const outro = c.a.ev === ficticio ? c.b : c.a;
+        const idx = sessoes.indexOf(meu.s);
+        if (idx >= 0) { trs[idx].classList.add('em-conflito'); trs[idx].title = `Conflito com: ${outro.ev.nome}`; }
+        linhas.push(`${fmtData(c.data)} · ${esc(estado.locais.get(c.local_id)?.nome)} — ${esc(outro.ev.nome)} (${esc(faixa(outro.s) || 'sem horário')})`);
       }
+      blocos.push(`<div class="bloco erro"><strong>⚠ Conflito de ambiente:</strong><br>${linhas.join('<br>')}</div>`);
     }
-    $('#previa').innerHTML = blocos.join('');
-  }, 250);
-}
-
-// Mesma regra do servidor (servidor.py: e_virtual).
-function eVirtual(c) {
-  const mod = c.M.toLowerCase();
-  const local = c.N.toLowerCase();
-  if (mod.includes('presencial') && !mod.includes('tele')) return false;
-  if (mod.includes('híbrido') || mod.includes('hibrido')) return false;
-  if (['ead', 'online', 'telepresencial'].some((p) => mod.includes(p))) return true;
-  return local.includes('plataforma');
+    const incompletas = sessoes.filter((s) => s.data && Boolean(s.inicio) !== Boolean(s.fim)).length;
+    if (incompletas) blocos.push('<div class="bloco alerta">Há linhas com só início ou só fim preenchido.</div>');
+  }
+  $('#previa').innerHTML = blocos.join('');
 }
 
 async function salvar(e) {
   e.preventDefault();
-  const campos = lerForm();
-  if (!campos.C.trim()) { aviso('Informe o nome do EVENTO.', true); return; }
+  const evento = lerEvento();
+  const sessoes = lerSessoes();
+  if (sessoes.some((s) => !s.data)) { aviso('Há linhas sem data. Preencha a data ou remova a linha.', true); return; }
   const botao = $('#salvar');
   botao.disabled = true;
   try {
     const ev = estado.editando;
+    const corpo = { evento, sessoes };
     const r = ev
-      ? await api('PUT', `/api/eventos/${ev.linha}`, { original: ev.campos, campos })
-      : await api('POST', '/api/eventos', { campos, mes: estado.mes + 1 });
+      ? await api('PUT', `/api/eventos/${ev.id}`, { ...corpo, versao: ev.versao, manter_revisao: $('#manterRevisao')?.checked })
+      : await api('POST', '/api/eventos', corpo);
     $('#modal').close();
     aplicarDados(r);
-    aviso(ev ? `Linha ${r.linha} atualizada na planilha.` : `Evento criado na linha ${r.linha} da planilha.`);
+    aviso(ev ? 'Evento atualizado.' : 'Evento criado.');
   } catch (err) {
     aviso(err.message, true);
   } finally {
@@ -440,20 +478,82 @@ async function salvar(e) {
 
 async function excluir() {
   const ev = estado.editando;
-  if (!ev) return;
-  if (!confirm(`Excluir “${ev.campos.C}”?\n\nO conteúdo da linha ${ev.linha} será apagado da planilha (um backup é salvo antes).`)) return;
+  if (!ev || !confirm(`Excluir “${ev.nome}”?\n\nO evento e todas as suas sessões serão removidos.`)) return;
   try {
-    const r = await api('DELETE', `/api/eventos/${ev.linha}`, { original: ev.campos });
+    const r = await api('DELETE', `/api/eventos/${ev.id}`, { versao: ev.versao });
     $('#modal').close();
     aplicarDados(r);
-    aviso(`Evento da linha ${ev.linha} excluído.`);
+    aviso('Evento excluído.');
   } catch (err) {
     aviso(err.message, true);
   }
 }
 
-function eventoPorLinha(linha) {
-  return estado.dados.eventos.find((e) => e.linha === Number(linha));
+function duplicar() {
+  const dados = { ...lerEvento(), sessoes: lerSessoes() };
+  $('#modal').close();
+  abrirModal(null, dados);
+  $('#tituloModal').textContent = 'Novo evento (cópia)';
+}
+
+async function adicionarVarias() {
+  const texto = $('#variasDatas').value.trim();
+  if (!texto) return;
+  const r = await api('POST', '/api/interpretar', { texto });
+  if (!r.datas.length) { aviso('Não reconheci datas. Exemplos: “09, 10 e 11/02” ou “06 a 10/04”.', true); return; }
+  const modelo = lerSessoes().at(-1) || {};
+  const existentes = new Set(lerSessoes().map((s) => s.data));
+  const novas = r.datas.filter((d) => !existentes.has(d));
+  $('#linhasSessoes').insertAdjacentHTML('beforeend', novas.map((d) => linhaSessao({ ...modelo, data: d })).join(''));
+  $('#variasDatas').value = '';
+  previa();
+  aviso(`${novas.length} data(s) adicionada(s)` + (novas.length < r.datas.length ? ' (as repetidas foram ignoradas).' : '.'));
+}
+
+function aplicarTodas() {
+  const trs = $$('#linhasSessoes tr');
+  if (trs.length < 2) return;
+  const [inicio, fim, local] = ['inicio', 'fim', 'local_id'].map((n) => $(`[name=${n}]`, trs[0]).value);
+  for (const tr of trs.slice(1)) {
+    $('[name=inicio]', tr).value = inicio;
+    $('[name=fim]', tr).value = fim;
+    $('[name=local_id]', tr).value = local;
+  }
+  previa();
+}
+
+// ---------- locais ----------
+function renderLocais() {
+  const ls = [...estado.dados.locais].sort((a, b) => a.tipo.localeCompare(b.tipo) || a.nome.localeCompare(b.nome));
+  const linha = (l) => `<tr data-local-id="${l?.id ?? ''}" class="${l && !l.ativo ? 'inativo' : ''}">`
+    + `<td><input type="text" name="nome" value="${esc(l?.nome || '')}" placeholder="Nome do novo local"></td>`
+    + `<td><select name="tipo">${Object.entries(TIPOS_LOCAL).map(([v, r]) => `<option value="${v}"${(l?.tipo || 'fisico') === v ? ' selected' : ''}>${r}</option>`).join('')}</select></td>`
+    + `<td><input type="checkbox" name="ativo"${!l || l.ativo ? ' checked' : ''}></td>`
+    + `<td>${l ? l.eventos : ''}</td>`
+    + `<td><button type="button" class="secundario" data-salvar-local>${l ? 'Salvar' : 'Adicionar'}</button>`
+    + (l ? ` <button type="button" class="perigo" data-excluir-local${l.eventos ? ' disabled title="Em uso: desative em vez de excluir"' : ''}>Excluir</button>` : '') + '</td></tr>';
+  $('#linhasLocais').innerHTML = ls.map(linha).join('') + linha(null);
+}
+
+async function salvarLocal(tr) {
+  const id = tr.dataset.localId;
+  const corpo = { nome: $('[name=nome]', tr).value, tipo: $('[name=tipo]', tr).value, ativo: $('[name=ativo]', tr).checked };
+  try {
+    const r = id ? await api('PUT', `/api/locais/${id}`, corpo) : await api('POST', '/api/locais', corpo);
+    aplicarDados(r);
+    renderLocais();
+    aviso(id ? 'Local atualizado.' : 'Local adicionado.');
+  } catch (err) { aviso(err.message, true); }
+}
+
+async function excluirLocal(tr) {
+  const nome = $('[name=nome]', tr).value;
+  if (!confirm(`Excluir o local “${nome}”?`)) return;
+  try {
+    aplicarDados(await api('DELETE', `/api/locais/${tr.dataset.localId}`));
+    renderLocais();
+    aviso('Local excluído.');
+  } catch (err) { aviso(err.message, true); }
 }
 
 // ---------- eventos da página ----------
@@ -464,43 +564,81 @@ function mudarMes(delta) {
   render();
 }
 
+function eventoPorId(id) { return estado.dados.eventos.find((e) => e.id === Number(id)); }
+
+function abrirPorUrl() {
+  const id = new URLSearchParams(location.search).get('evento');
+  if (!id || abrirPorUrl.feito) return;
+  abrirPorUrl.feito = true;
+  const ev = eventoPorId(id);
+  if (!ev) return;
+  if (ev.datas.length) { estado.ano = Number(ev.datas[0].slice(0, 4)); estado.mes = Number(ev.datas[0].slice(5, 7)) - 1; render(); }
+  if ($('#ajuda').open) $('#ajuda').close();
+  abrirModal(ev);
+}
+
 document.addEventListener('click', (e) => {
-  const alvo = e.target.closest('[data-linha]');
-  if (alvo) { const ev = eventoPorLinha(alvo.dataset.linha); if (ev) abrirModal(ev); return; }
-  const celula = e.target.closest('#vista [data-data]');
-  if (celula && celula.dataset.data && e.detail === 2) {
-    const [a, m, d] = celula.dataset.data.split('-');
-    abrirModal(null, { A: `${d}/${m}/${a}`, N: celula.dataset.local || '' });
+  const t = e.target;
+  if (t.closest('[data-fechar]')) { t.closest('dialog').close(); return; }
+  if (t.closest('[data-remover-linha]')) { t.closest('tr').remove(); previa(); return; }
+  if (t.closest('[data-duplicar-linha]')) {
+    const tr = t.closest('tr');
+    const s = lerSessoes()[$$('#linhasSessoes tr').indexOf(tr)];
+    tr.insertAdjacentHTML('afterend', linhaSessao(s));
+    previa();
+    return;
+  }
+  if (t.closest('[data-salvar-local]')) { salvarLocal(t.closest('tr')); return; }
+  if (t.closest('[data-excluir-local]')) { excluirLocal(t.closest('tr')); return; }
+  const alvo = t.closest('[data-evento]');
+  if (alvo && !t.closest('dialog')) { const ev = eventoPorId(alvo.dataset.evento); if (ev) abrirModal(ev); return; }
+  const celula = t.closest('#vista [data-data]');
+  if (celula?.dataset.data && e.detail === 2) {
+    const local = celula.dataset.local ? Number(celula.dataset.local) : null;
+    abrirModal(null, { sessoes: [{ data: celula.dataset.data, inicio: '', fim: '', local_id: local }],
+      mes_referencia: Number(celula.dataset.data.slice(5, 7)) });
   }
 });
 
+$('#formEvento').addEventListener('input', previa);
+$('#formEvento').addEventListener('change', previa);
+$('#formEvento').onsubmit = salvar;
+$('#addSessao').onclick = () => {
+  const ult = lerSessoes().at(-1);
+  let data = '';
+  if (ult?.data) { const d = new Date(ult.data + 'T12:00'); do { d.setDate(d.getDate() + 1); } while (d.getDay() % 6 === 0); data = d.toISOString().slice(0, 10); }
+  $('#linhasSessoes').insertAdjacentHTML('beforeend', linhaSessao({ ...(ult || {}), data }));
+  previa();
+};
+$('#addVarias').onclick = adicionarVarias;
+$('#variasDatas').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); adicionarVarias(); } };
+$('#aplicarTodas').onclick = aplicarTodas;
+$('#excluir').onclick = excluir;
+$('#duplicar').onclick = duplicar;
+$('#abrirLocais').onclick = () => { renderLocais(); $('#modalLocais').showModal(); };
+$('#abrirAjuda').onclick = () => $('#ajuda').showModal();
+$('#ajuda').addEventListener('close', () => gravarPref('ajudaVista', '1'));
 $('#mesAnterior').onclick = () => mudarMes(-1);
 $('#mesSeguinte').onclick = () => mudarMes(1);
 $('#hoje').onclick = () => { const h = new Date(); estado.ano = h.getFullYear(); estado.mes = h.getMonth(); render(); };
-document.querySelectorAll('.alternador button').forEach((b) => { b.onclick = () => { estado.vista = b.dataset.vista; gravarPref('vista', estado.vista); render(); }; });
+$$('.alternador button').forEach((b) => { b.onclick = () => { estado.vista = b.dataset.vista; gravarPref('vista', estado.vista); render(); }; });
 $('#novo').onclick = () => abrirModal(null);
 $('#filtroAmbiente').onchange = (e) => { estado.filtroAmbiente = e.target.value; render(); };
 $('#filtroBusca').oninput = (e) => { estado.busca = e.target.value.trim().toLowerCase(); render(); };
 $('#filtroVirtual').checked = estado.mostrarVirtual;
 $('#filtroVirtual').onchange = (e) => { estado.mostrarVirtual = e.target.checked; gravarPref('virtual', e.target.checked ? '1' : '0'); render(); };
 $('#filtroSuspensos').onchange = (e) => { estado.mostrarSuspensos = e.target.checked; render(); };
-$('#abrirAjuda').onclick = () => $('#ajuda').showModal();
-document.querySelectorAll('[data-fechar-ajuda]').forEach((b) => { b.onclick = () => $('#ajuda').close(); });
-$('#ajuda').addEventListener('close', () => gravarPref('ajudaVista', '1'));
-$('#formEvento').onsubmit = salvar;
-$('#cancelar').onclick = () => $('#modal').close();
-$('#excluir').onclick = excluir;
+$('#filtroTodoAno').onchange = (e) => { estado.todoAno = e.target.checked; render(); };
 document.addEventListener('keydown', (e) => {
-  if ($('#modal').open || $('#ajuda').open || e.target.matches('input, textarea, select')) return;
+  if ($$('dialog').some((d) => d.open) || e.target.matches('input, textarea, select')) return;
   if (e.key === 'ArrowLeft') mudarMes(-1);
   if (e.key === 'ArrowRight') mudarMes(1);
 });
-// Recarrega ao voltar para a aba, caso a planilha tenha sido editada no Excel.
-document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('#modal').open) carregar(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !$$('dialog').some((d) => d.open)) carregar(); });
 
 const params = new URLSearchParams(location.search);
 if (params.get('mes')) estado.mes = Math.min(11, Math.max(0, Number(params.get('mes')) - 1));
 if (params.get('vista')) estado.vista = params.get('vista');
-$('#vista').innerHTML = '<div class="carregando">Carregando planilha…</div>';
+$('#vista').innerHTML = '<div class="carregando">Carregando…</div>';
 carregar();
-if (lerPref('ajudaVista', '0') !== '1') $('#ajuda').showModal();
+if (lerPref('ajudaVista', '0') !== '1' && !params.get('evento')) $('#ajuda').showModal();

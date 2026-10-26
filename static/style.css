@@ -181,12 +181,58 @@ dialog.ajuda { width: min(780px, 96vw); }
 .ajuda-corpo table.exemplos td:first-child { white-space: nowrap; }
 .marca-conflito { box-shadow: inset 0 0 0 2px var(--perigo); background: var(--perigo-fundo); color: var(--perigo); border-radius: 4px; padding: 0 4px; }
 
-/* Campo LOCAL */
-.campo-local { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
-.campo-local .rotulo { font-size: 12px; color: var(--sutil); }
-#locaisSel { display: flex; flex-direction: column; gap: 6px; }
-.local-linha { display: flex; gap: 6px; }
-.local-linha select { flex: 1; border: 1px solid var(--borda); border-radius: 8px; padding: 7px 9px; background: var(--superficie); font-size: 13.5px; }
-.local-linha select:focus { outline: 2px solid var(--primaria); outline-offset: -1px; }
-button.link { align-self: flex-start; border: 0; background: none; color: var(--primaria); padding: 2px 0; font-size: 12.5px; }
+
+/* ---------- v2 ---------- */
+.topo .acoes { flex-wrap: wrap; }
+a.botao { display: inline-flex; align-items: center; border-radius: 8px; border: 1px solid var(--borda); background: var(--superficie); padding: 7px 12px; color: inherit; text-decoration: none; }
+a.botao:hover { background: var(--superficie-2); }
+.chip .h { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip .t { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.chip.revisar::after { content: "⚠"; float: right; color: var(--alerta); }
+.lista li.revisar { border-color: var(--alerta); background: var(--alerta-fundo); }
+button.link { border: 0; background: none; color: var(--primaria); padding: 2px 0; font-size: 12.5px; }
 button.link:hover { background: none; text-decoration: underline; }
+
+/* Lista */
+table.tabela { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.tabela th { position: sticky; top: 0; background: var(--superficie); text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--borda); font-size: 12px; color: var(--sutil); font-weight: 600; z-index: 1; }
+table.tabela td { padding: 7px 10px; border-bottom: 1px solid var(--borda); vertical-align: top; }
+table.tabela tr.clicavel { cursor: pointer; }
+table.tabela tr.clicavel:hover td { background: var(--superficie-2); }
+table.tabela .suspenso td { opacity: .55; text-decoration: line-through; }
+.etiqueta { display: inline-block; border-radius: 999px; padding: 0 8px; font-size: 11px; background: var(--superficie-2); margin: 1px 2px 1px 0; white-space: nowrap; }
+.etiqueta.alerta { background: var(--alerta-fundo); color: var(--alerta); }
+.etiqueta.perigo { background: var(--perigo-fundo); color: var(--perigo); }
+
+/* Formulário de evento */
+dialog.grande { width: min(1040px, 97vw); }
+.form-corpo { padding: 4px 20px 8px; max-height: 70vh; overflow: auto; }
+.form-corpo h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--sutil); margin: 14px 0 8px; }
+.form-corpo .grade-campos { padding: 0; max-height: none; overflow: visible; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.form-corpo .grade-campos label.largo { grid-column: 1 / -1; }
+.form-corpo .grade-campos label.duplo { grid-column: span 2; }
+@media (max-width: 760px) { .form-corpo .grade-campos { grid-template-columns: 1fr; } .form-corpo .grade-campos label.duplo { grid-column: auto; } }
+.grade-campos select { border: 1px solid var(--borda); border-radius: 8px; padding: 7px 9px; background: var(--superficie); font-size: 13.5px; }
+.aviso-revisar { background: var(--alerta-fundo); color: var(--alerta); border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 12.5px; white-space: pre-line; }
+.aviso-revisar pre { margin: 6px 0 0; white-space: pre-wrap; font: inherit; color: var(--texto); opacity: .85; }
+.aviso-revisar label { display: flex; gap: 6px; align-items: center; margin-top: 8px; color: var(--texto); }
+
+table.sessoes { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.sessoes th { text-align: left; font-size: 11.5px; color: var(--sutil); font-weight: 600; padding: 4px 6px; }
+table.sessoes td { padding: 3px 4px; vertical-align: middle; }
+table.sessoes input, table.sessoes select { width: 100%; border: 1px solid var(--borda); border-radius: 7px; padding: 6px 7px; background: var(--superficie); font-size: 13px; }
+table.sessoes input:focus, table.sessoes select:focus { outline: 2px solid var(--primaria); outline-offset: -1px; }
+table.sessoes td.acoes-linha { white-space: nowrap; width: 1%; }
+table.sessoes td.acoes-linha button { width: 30px; height: 30px; padding: 0; }
+table.sessoes tr.em-conflito td { background: var(--perigo-fundo); }
+table.sessoes tr.em-conflito td:first-child { box-shadow: inset 3px 0 0 var(--perigo); }
+table.sessoes .semana { font-size: 11px; color: var(--sutil); white-space: nowrap; }
+.barra-sessoes { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.barra-sessoes input { border: 1px solid var(--borda); border-radius: 8px; padding: 6px 8px; background: var(--superficie); min-width: 240px; }
+.dica { font-size: 12px; color: var(--sutil); margin: 6px 0 0; }
+
+/* Locais */
+table.locais-tab input, table.locais-tab select { border: 1px solid var(--borda); border-radius: 7px; padding: 6px 7px; background: var(--superficie); width: 100%; }
+table.locais-tab td { padding: 4px 6px; }
+table.locais-tab tr.inativo input[type=text] { opacity: .6; }
+table.tabela td:first-child { min-width: 120px; white-space: nowrap; }

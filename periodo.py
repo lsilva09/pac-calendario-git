@@ -105,7 +105,36 @@ def interpretar_horario(texto):
         fim = int(h2) * 60 + int(m2 or 0)
         if fim > ini:
             out.append((ini, fim))
+    if not out:
+        # '08 às 13h' (hora inicial sem o 'h')
+        for h1, h2, m2 in re.findall(r'(?<![\d/])(\d{1,2})\s*(?:às|as|até)\s*(\d{1,2})\s*h\s*(\d{2})?', s):
+            ini, fim = int(h1) * 60, int(h2) * 60 + int(m2 or 0)
+            if fim > ini:
+                out.append((ini, fim))
     return out
+
+
+def horario_por_dia(texto, ano=ANO_PADRAO):
+    """'21/10: 08h30 às 11h30 e 22/10: 13h00 às 16h00' -> {date: [(ini, fim)]}.
+
+    Retorna {} se o texto não indicar horários diferentes por data.
+    """
+    if not texto:
+        return {}
+    marcas = list(re.finditer(r'(?<!\d)(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?(?!\d)', str(texto)))
+    saida = {}
+    for i, m in enumerate(marcas):
+        trecho = str(texto)[m.end():marcas[i + 1].start() if i + 1 < len(marcas) else None]
+        faixas = interpretar_horario(trecho)
+        an = int(m.group(3)) if m.group(3) else ano
+        an += 2000 if an < 100 else 0
+        try:
+            d = date(an, int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            continue
+        if faixas:
+            saida[d] = faixas
+    return saida
 
 
 def formatar_periodo(datas):
