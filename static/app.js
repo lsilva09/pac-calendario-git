@@ -10,7 +10,6 @@ const LAYOUT = [
   ['B', false], ['E', false], ['F', false], ['H', false], ['G', true], ['L', true], ['J', false],
   ['O', true, 'textarea'],
 ];
-const DATALISTS = { M: 'dlModalidades', E: 'dlAreas', F: 'dlOrigens' };
 
 const estado = {
   dados: null,
@@ -79,15 +78,50 @@ async function api(metodo, url, corpo) {
 
 async function carregar() {
   try {
-    aplicarDados(await api('GET', '/api/eventos'));
+    const dados = await api('GET', '/api/eventos');
+    if (dados.sem_planilha) semPlanilha(); else aplicarDados(dados);
   } catch (e) {
     $('#vista').innerHTML = `<div class="carregando">${esc(e.message)}</div>`;
   }
 }
 
+function semPlanilha() {
+  $('#arquivo').textContent = 'Nenhuma planilha aberta';
+  $('#vista').innerHTML = '<div class="carregando">Baixe a planilha do PAC no Google Drive '
+    + '(Arquivo → Fazer download → Microsoft Excel) e clique em <b>Abrir planilha</b>.</div>';
+}
+
+function fmtCarga(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  return ` · carregada em ${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+async function abrirPlanilha(arquivo) {
+  if (!arquivo) return;
+  const botao = $('#abrirPlanilha');
+  botao.disabled = true;
+  try {
+    const r = await fetch('/api/planilha', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Nome-Arquivo': encodeURIComponent(arquivo.name) },
+      body: arquivo,
+    });
+    const dados = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(dados.erro || `Erro ${r.status}`);
+    aplicarDados(dados);
+    aviso(`Planilha “${arquivo.name}” aberta: ${dados.eventos.length} eventos.`);
+  } catch (err) {
+    aviso(err.message, true);
+  } finally {
+    botao.disabled = false;
+    $('#arquivoPlanilha').value = '';
+  }
+}
+
 function aplicarDados(dados) {
   estado.dados = dados;
-  $('#arquivo').textContent = `${dados.arquivo} · aba PAC · ${dados.eventos.length} eventos`;
+  $('#arquivo').textContent = `${dados.arquivo} · aba PAC · ${dados.eventos.length} eventos${fmtCarga(dados.carregada_em)}`;
   preencherListas();
   render();
   // Link direto: ?evento=<linha> abre o evento no mês dele.
@@ -279,17 +313,6 @@ function renderLateral(conflitos) {
 
 function preencherListas() {
   const evs = estado.dados.eventos;
-  const contar = (col) => {
-    const m = new Map();
-    for (const ev of evs) {
-      const valores = col === 'N' ? partesLocal(ev) : [ev.campos[col].trim()];
-      for (const v of valores) if (v) m.set(v, (m.get(v) || 0) + 1);
-    }
-    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([v]) => v);
-  };
-  for (const [col, id] of Object.entries(DATALISTS)) {
-    $('#' + id).innerHTML = contar(col).map((v) => `<option value="${esc(v)}">`).join('');
-  }
   const sel = $('#filtroAmbiente');
   const atual = estado.filtroAmbiente;
   const ambientes = [...new Set(evs.flatMap((ev) => ev.ambiente ? partesLocal(ev) : [SEM_LOCAL]))].sort((a, b) => a.localeCompare(b));
@@ -298,106 +321,44 @@ function preencherListas() {
   estado.filtroAmbiente = sel.value;
 }
 
-// ---------- formulário ----------
-function abrirModal(ev, preset = {}) {
+// ---------- detalhes do evento (somente leitura) ----------
+function abrirModal(ev) {
   estado.editando = ev;
-  const campos = ev ? ev.campos : { ...Object.fromEntries(Object.keys(estado.dados.campos).map((c) => [c, ''])), ...preset };
-  $('#tituloModal').textContent = ev ? 'Editar evento' : 'Novo evento';
-  $('#linhaModal').textContent = ev ? `Linha ${ev.linha} da aba PAC` : 'Será gravado numa linha vazia do mês correspondente';
-  $('#excluir').hidden = !ev;
+  $('#tituloModal').textContent = ev.campos.C || 'Evento';
+  $('#linhaModal').textContent = `Linha ${ev.linha} da aba PAC`;
   $('#camposForm').innerHTML = LAYOUT.map(([col, largo, tipo]) => {
-    const rotulo = estado.dados.campos[col];
-    if (col === 'N') return campoLocal(rotulo, campos.N);
-    const lista = DATALISTS[col] ? ` list="${DATALISTS[col]}"` : '';
-    const dica = col === 'A' ? ' placeholder="ex.: 09/03, 10/03 e 11/03  ou  06 a 10/04"' : col === 'I' ? ' placeholder="ex.: 08h às 12h e 13h às 17h"' : '';
-    const campo = tipo === 'textarea' || campos[col].includes('\n')
-      ? `<textarea name="${col}" rows="2">${esc(campos[col])}</textarea>`
-      : `<input name="${col}" value="${esc(campos[col])}"${lista}${dica} autocomplete="off">`;
-    return `<label class="${largo ? 'largo' : ''}">${esc(rotulo)}${campo}</label>`;
+    const valor = ev.campos[col];
+    const campo = tipo === 'textarea' || valor.includes('\n')
+      ? `<textarea name="${col}" rows="2" readonly>${esc(valor)}</textarea>`
+      : `<input name="${col}" value="${esc(valor)}" readonly>`;
+    return `<label class="${largo ? 'largo' : ''}">${esc(estado.dados.campos[col])}${campo}</label>`;
   }).join('');
-  $('#formEvento').oninput = (e) => { if (['A', 'I', 'N_parte', 'M', 'O'].includes(e.target.name)) previa(); };
   previa();
   $('#modal').showModal();
-  $('#camposForm [name=C]').focus();
 }
-
-function lerForm() {
-  const f = new FormData($('#formEvento'));
-  const campos = Object.fromEntries(Object.keys(estado.dados.campos).map((c) => [c, (f.get(c) ?? '').toString()]));
-  const partes = [...new Set(f.getAll('N_parte').map(String).filter(Boolean))];
-  campos.N = partes.join(' / ');
-  // Sem alteração no local, preserva o texto original (inclusive grafias antigas).
-  const original = estado.editando?.campos.N ?? '';
-  if (estado.localOriginal && campos.N === estado.localOriginal.join(' / ')) campos.N = original;
-  return campos;
-}
-
-// ---------- campo LOCAL (somente locais da lista oficial) ----------
-function separarLocal(texto) {
-  const v = texto.replace(/\s+/g, ' ').trim();
-  if (!v) return [];
-  if (estado.dados.locais.includes(v)) return [v];
-  return v.split(' / ').map((p) => p.trim()).filter(Boolean);
-}
-
-function opcoesLocal(selecionado) {
-  const locais = estado.dados.locais;
-  const extra = selecionado && !locais.includes(selecionado)
-    ? `<option value="${esc(selecionado)}" selected>⚠ ${esc(selecionado)} (fora da lista)</option>` : '';
-  return `<option value="">— selecione —</option>${extra}`
-    + locais.map((l) => `<option${l === selecionado ? ' selected' : ''}>${esc(l)}</option>`).join('');
-}
-
-function linhaLocal(valor, removivel) {
-  return `<div class="local-linha"><select name="N_parte">${opcoesLocal(valor)}</select>`
-    + (removivel ? '<button type="button" class="icone" data-remover-local aria-label="Remover ambiente">×</button>' : '') + '</div>';
-}
-
-function campoLocal(rotulo, valor) {
-  const partes = separarLocal(valor);
-  estado.localOriginal = partes;
-  const linhas = (partes.length ? partes : ['']).map((p, i) => linhaLocal(p, i > 0)).join('');
-  return `<div class="largo campo-local"><span class="rotulo">${esc(rotulo)}</span><div id="locaisSel">${linhas}</div>`
-    + '<button type="button" class="link" id="addLocal">+ outro ambiente (evento em mais de um local)</button></div>';
-}
-
-document.addEventListener('click', (e) => {
-  if (e.target.id === 'addLocal') {
-    $('#locaisSel').insertAdjacentHTML('beforeend', linhaLocal('', true));
-    [...document.querySelectorAll('#locaisSel select')].at(-1).focus();
-  } else if (e.target.matches('[data-remover-local]')) {
-    e.target.closest('.local-linha').remove();
-    previa();
-  }
-});
 
 async function previa() {
   clearTimeout(previa.t);
   previa.t = setTimeout(async () => {
-    const campos = lerForm();
+    const campos = estado.editando.campos;
     let r;
     try { r = await api('POST', '/api/interpretar', { periodo: campos.A, horario: campos.I }); } catch { return; }
     const blocos = [];
     if (!campos.A.trim()) {
-      blocos.push('<div class="bloco alerta">Sem PERÍODO: o evento não aparecerá no calendário (só na lista “Sem data reconhecida”).</div>');
+      blocos.push('<div class="bloco alerta">Sem PERÍODO: o evento não aparece no calendário (só na lista “Sem data reconhecida”).</div>');
     } else if (!r.datas.length) {
-      blocos.push('<div class="bloco erro">Não consegui reconhecer datas neste PERÍODO. Use formatos como “09/03, 10/03 e 11/03” ou “06 a 10/04”.</div>');
+      blocos.push('<div class="bloco erro">Não consegui reconhecer datas neste PERÍODO. Na planilha, use formatos como “09/03, 10/03 e 11/03” ou “06 a 10/04”.</div>');
     } else {
       const lista = r.datas.length > 14 ? r.datas.slice(0, 12).map(fmtData).join(', ') + ` … ${fmtData(r.datas.at(-1))}` : r.datas.map(fmtData).join(', ');
       blocos.push(`<div class="bloco"><strong>${r.datas.length} dia(s) reconhecido(s):</strong> ${lista}`
         + (campos.I.trim() && !r.horarios.length ? '<br><span class="sutil">Horário não reconhecido: conflitos serão avaliados para o dia inteiro.</span>' : '') + '</div>');
-      // Conflitos que este evento teria com os demais.
-      const ficticio = {
-        linha: estado.editando?.linha ?? -1, campos, datas: r.datas, horarios: r.horarios,
-        ambiente: campos.N.replace(/\s+/g, ' ').trim(),
-        virtual: eVirtual(campos), suspenso: /suspens|cancelad/i.test(campos.O),
-      };
-      if (participaDeConflito(ficticio)) {
-        const outros = estado.dados.eventos.filter((e) => e.linha !== ficticio.linha);
-        const achados = calcularConflitos([ficticio, ...outros]).filter((c) => c.a === ficticio || c.b === ficticio);
+      // Conflitos deste evento com os demais.
+      const ev = estado.editando;
+      if (participaDeConflito(ev)) {
+        const achados = calcularConflitos(estado.dados.eventos).filter((c) => c.a === ev || c.b === ev);
         if (achados.length) {
           blocos.push('<div class="bloco erro"><strong>⚠ Conflito de ambiente:</strong><br>' + achados.map((c) => {
-            const o = c.a === ficticio ? c.b : c.a;
+            const o = c.a === ev ? c.b : c.a;
             return `${fmtData(c.data)} — ${esc(o.campos.C)} (${esc(o.campos.I || 'sem horário')})`;
           }).join('<br>') + '</div>');
         }
@@ -405,51 +366,6 @@ async function previa() {
     }
     $('#previa').innerHTML = blocos.join('');
   }, 250);
-}
-
-// Mesma regra do servidor (servidor.py: e_virtual).
-function eVirtual(c) {
-  const mod = c.M.toLowerCase();
-  const local = c.N.toLowerCase();
-  if (mod.includes('presencial') && !mod.includes('tele')) return false;
-  if (mod.includes('híbrido') || mod.includes('hibrido')) return false;
-  if (['ead', 'online', 'telepresencial'].some((p) => mod.includes(p))) return true;
-  return local.includes('plataforma');
-}
-
-async function salvar(e) {
-  e.preventDefault();
-  const campos = lerForm();
-  if (!campos.C.trim()) { aviso('Informe o nome do EVENTO.', true); return; }
-  const botao = $('#salvar');
-  botao.disabled = true;
-  try {
-    const ev = estado.editando;
-    const r = ev
-      ? await api('PUT', `/api/eventos/${ev.linha}`, { original: ev.campos, campos })
-      : await api('POST', '/api/eventos', { campos, mes: estado.mes + 1 });
-    $('#modal').close();
-    aplicarDados(r);
-    aviso(ev ? `Linha ${r.linha} atualizada na planilha.` : `Evento criado na linha ${r.linha} da planilha.`);
-  } catch (err) {
-    aviso(err.message, true);
-  } finally {
-    botao.disabled = false;
-  }
-}
-
-async function excluir() {
-  const ev = estado.editando;
-  if (!ev) return;
-  if (!confirm(`Excluir “${ev.campos.C}”?\n\nO conteúdo da linha ${ev.linha} será apagado da planilha (um backup é salvo antes).`)) return;
-  try {
-    const r = await api('DELETE', `/api/eventos/${ev.linha}`, { original: ev.campos });
-    $('#modal').close();
-    aplicarDados(r);
-    aviso(`Evento da linha ${ev.linha} excluído.`);
-  } catch (err) {
-    aviso(err.message, true);
-  }
 }
 
 function eventoPorLinha(linha) {
@@ -466,19 +382,15 @@ function mudarMes(delta) {
 
 document.addEventListener('click', (e) => {
   const alvo = e.target.closest('[data-linha]');
-  if (alvo) { const ev = eventoPorLinha(alvo.dataset.linha); if (ev) abrirModal(ev); return; }
-  const celula = e.target.closest('#vista [data-data]');
-  if (celula && celula.dataset.data && e.detail === 2) {
-    const [a, m, d] = celula.dataset.data.split('-');
-    abrirModal(null, { A: `${d}/${m}/${a}`, N: celula.dataset.local || '' });
-  }
+  if (alvo) { const ev = eventoPorLinha(alvo.dataset.linha); if (ev) abrirModal(ev); }
 });
 
 $('#mesAnterior').onclick = () => mudarMes(-1);
 $('#mesSeguinte').onclick = () => mudarMes(1);
 $('#hoje').onclick = () => { const h = new Date(); estado.ano = h.getFullYear(); estado.mes = h.getMonth(); render(); };
 document.querySelectorAll('.alternador button').forEach((b) => { b.onclick = () => { estado.vista = b.dataset.vista; gravarPref('vista', estado.vista); render(); }; });
-$('#novo').onclick = () => abrirModal(null);
+$('#abrirPlanilha').onclick = () => $('#arquivoPlanilha').click();
+$('#arquivoPlanilha').onchange = (e) => abrirPlanilha(e.target.files[0]);
 $('#filtroAmbiente').onchange = (e) => { estado.filtroAmbiente = e.target.value; render(); };
 $('#filtroBusca').oninput = (e) => { estado.busca = e.target.value.trim().toLowerCase(); render(); };
 $('#filtroVirtual').checked = estado.mostrarVirtual;
@@ -487,15 +399,12 @@ $('#filtroSuspensos').onchange = (e) => { estado.mostrarSuspensos = e.target.che
 $('#abrirAjuda').onclick = () => $('#ajuda').showModal();
 document.querySelectorAll('[data-fechar-ajuda]').forEach((b) => { b.onclick = () => $('#ajuda').close(); });
 $('#ajuda').addEventListener('close', () => gravarPref('ajudaVista', '1'));
-$('#formEvento').onsubmit = salvar;
-$('#cancelar').onclick = () => $('#modal').close();
-$('#excluir').onclick = excluir;
 document.addEventListener('keydown', (e) => {
   if ($('#modal').open || $('#ajuda').open || e.target.matches('input, textarea, select')) return;
   if (e.key === 'ArrowLeft') mudarMes(-1);
   if (e.key === 'ArrowRight') mudarMes(1);
 });
-// Recarrega ao voltar para a aba, caso a planilha tenha sido editada no Excel.
+// Recarrega ao voltar para a aba, caso outra janela tenha aberto uma planilha nova.
 document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('#modal').open) carregar(); });
 
 const params = new URLSearchParams(location.search);

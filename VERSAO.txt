@@ -1,1 +1,1 @@
-Versão 1 — snapshot de 25/10/2026. Para usar: dois cliques em 'Iniciar Calendario PAC.command'. Lê e grava a aba PAC de '../PAC 2026.xlsx'.
+Versão 1 (branch v1-planilha-ejud) — somente visualização. Para usar: dois cliques em 'Iniciar Calendario PAC.command' e clique em 'Abrir planilha' para escolher o .xlsx baixado do Google Drive. A planilha original nunca é alterada; o app guarda uma cópia em dados/planilha.xlsx.

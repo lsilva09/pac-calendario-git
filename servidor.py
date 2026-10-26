@@ -1,30 +1,36 @@
-"""Servidor local do Calendário PAC.
+"""Servidor local do Calendário PAC (somente visualização).
 
 Uso:  python3 servidor.py ["caminho/da/planilha.xlsx"] [--porta 8765]
-Depois abra http://localhost:8765 no navegador.
+Depois abra http://localhost:8765 no navegador e use o botão "Abrir planilha".
+A planilha escolhida é copiada para dados/planilha.xlsx; o arquivo original nunca é alterado.
 """
 import argparse
 import json
 import os
 import re
 import sys
+import tempfile
 import webbrowser
+from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, AQUI)
 
 from periodo import interpretar_periodo, interpretar_horario  # noqa: E402
-from planilha import Planilha, ConflitoEdicao, CAMPOS, MESES  # noqa: E402
+from planilha import Planilha, CAMPOS, MESES  # noqa: E402
 
-PLANILHA_PADRAO = os.path.join(os.path.dirname(AQUI), 'PAC 2026.xlsx')
-ARQUIVO_LOCAIS = os.path.join(AQUI, 'locais.json')
+DADOS = os.path.join(AQUI, 'dados')
+COPIA = os.path.join(DADOS, 'planilha.xlsx')
+INFO_COPIA = os.path.join(DADOS, 'planilha.json')
+TAMANHO_MAXIMO = 30 * 1024 * 1024
 ESTATICOS = os.path.join(AQUI, 'static')
 TIPOS = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
          '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'}
 
 planilha = None
+info_planilha = {}
 
 
 def e_virtual(campos):
@@ -40,26 +46,43 @@ def e_virtual(campos):
     return 'plataforma' in local
 
 
-class LocalInvalido(Exception):
+class PlanilhaInvalida(Exception):
     pass
 
 
-def ler_locais():
-    """Lista oficial de locais (relida a cada uso para refletir edições no arquivo)."""
-    with open(ARQUIVO_LOCAIS, encoding='utf-8') as f:
-        return json.load(f)['locais']
-
-
-def validar_local(local):
-    """Aceita vazio, um local da lista ou vários locais da lista separados por ' / '."""
-    local = chave_ambiente(local)
-    locais = ler_locais()
-    if not local or local in locais:
+def carregar_copia():
+    """Usa a última planilha aberta pelo botão, se houver."""
+    global planilha, info_planilha
+    if not os.path.isfile(COPIA):
         return
-    fora = [p for p in (x.strip() for x in local.split(' / ')) if p and p not in locais]
-    if fora:
-        raise LocalInvalido('Local fora da lista oficial: ' + ', '.join(fora) +
-                            '. Para incluir um local novo, edite o arquivo locais.json.')
+    try:
+        with open(INFO_COPIA, encoding='utf-8') as f:
+            info_planilha = json.load(f)
+    except (OSError, ValueError):
+        info_planilha = {}
+    planilha = Planilha(COPIA, None)
+
+
+def receber_planilha(nome, conteudo):
+    """Confere se o arquivo tem a aba PAC e só então substitui a cópia local."""
+    global planilha, info_planilha
+    os.makedirs(DADOS, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(suffix='.xlsx', dir=DADOS)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(conteudo)
+        try:
+            Planilha(tmp, None).ler()
+        except Exception as e:
+            raise PlanilhaInvalida(f'O arquivo "{nome}" não pôde ser lido como planilha do PAC: {e}')
+        os.replace(tmp, COPIA)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    info_planilha = {'nome': nome, 'carregada_em': datetime.now().isoformat(timespec='seconds')}
+    with open(INFO_COPIA, 'w', encoding='utf-8') as f:
+        json.dump(info_planilha, f, ensure_ascii=False)
+    planilha = Planilha(COPIA, None)
 
 
 def chave_ambiente(local):
@@ -82,6 +105,8 @@ def montar_evento(ev, mes_bloco):
 
 
 def listar():
+    if planilha is None:
+        return {'sem_planilha': True}
     eventos, cabecalhos, mtime = planilha.ler()
     saida = []
     for ev in eventos:
@@ -89,11 +114,11 @@ def listar():
         mes = cabecalhos[max(anteriores)] if anteriores else None
         saida.append(montar_evento(ev, mes))
     return {
-        'arquivo': os.path.basename(planilha.caminho),
+        'arquivo': info_planilha.get('nome') or os.path.basename(planilha.caminho),
+        'carregada_em': info_planilha.get('carregada_em'),
         'modificado': mtime,
         'campos': CAMPOS,
         'meses': MESES,
-        'locais': ler_locais(),
         'eventos': saida,
     }
 
@@ -142,22 +167,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(dados)
 
-    def _escrita(self, acao):
-        if not self._origem_ok():
-            return self._json(403, {'erro': 'origem não permitida'})
-        try:
-            corpo = self._corpo()
-            linha = acao(corpo)
-            return self._json(200, {'ok': True, 'linha': linha, **listar()})
-        except ConflitoEdicao as e:
-            return self._json(409, {'erro': str(e)})
-        except LocalInvalido as e:
-            return self._json(422, {'erro': str(e)})
-        except PermissionError:
-            return self._json(423, {'erro': 'A planilha está bloqueada. Feche-a no Excel e tente de novo.'})
-        except Exception as e:
-            return self._json(500, {'erro': f'Falha ao gravar: {e}'})
-
     def do_POST(self):
         caminho = urlparse(self.path).path
         if caminho == '/api/interpretar':
@@ -166,52 +175,44 @@ class Handler(BaseHTTPRequestHandler):
                 'datas': [d.isoformat() for d in interpretar_periodo(corpo.get('periodo', ''))],
                 'horarios': interpretar_horario(corpo.get('horario', '')),
             })
-        if caminho == '/api/eventos':
-            def criar(corpo):
-                campos = corpo.get('campos', {})
-                validar_local(campos.get('N', ''))
-                datas = interpretar_periodo(campos.get('A', ''))
-                mes = datas[0].month if datas else corpo.get('mes')
-                return planilha.criar(campos, mes)
-            return self._escrita(criar)
+        if caminho == '/api/planilha':
+            if not self._origem_ok():
+                return self._json(403, {'erro': 'origem não permitida'})
+            n = int(self.headers.get('Content-Length') or 0)
+            if not n:
+                return self._json(400, {'erro': 'Nenhum arquivo recebido.'})
+            if n > TAMANHO_MAXIMO:
+                return self._json(413, {'erro': 'Arquivo grande demais para uma planilha do PAC.'})
+            nome = os.path.basename(unquote(self.headers.get('X-Nome-Arquivo', ''))) or 'planilha.xlsx'
+            try:
+                receber_planilha(nome, self.rfile.read(n))
+                return self._json(200, listar())
+            except PlanilhaInvalida as e:
+                return self._json(422, {'erro': str(e)})
+            except Exception as e:
+                return self._json(500, {'erro': f'Falha ao abrir a planilha: {e}'})
         return self._json(404, {'erro': 'não encontrado'})
-
-    def do_PUT(self):
-        m = re.fullmatch(r'/api/eventos/(\d+)', urlparse(self.path).path)
-        if not m:
-            return self._json(404, {'erro': 'não encontrado'})
-        r = int(m.group(1))
-        def atualizar(corpo):
-            original, campos = corpo.get('original', {}), corpo.get('campos', {})
-            # Locais antigos fora da lista continuam aceitos enquanto não forem alterados.
-            if campos.get('N', '') != original.get('N', ''):
-                validar_local(campos.get('N', ''))
-            return planilha.atualizar(r, original, campos)
-        return self._escrita(atualizar)
-
-    def do_DELETE(self):
-        m = re.fullmatch(r'/api/eventos/(\d+)', urlparse(self.path).path)
-        if not m:
-            return self._json(404, {'erro': 'não encontrado'})
-        r = int(m.group(1))
-        return self._escrita(lambda c: planilha.excluir(r, c.get('original', {})))
 
 
 def main():
     global planilha
     ap = argparse.ArgumentParser(description='Calendário do PAC')
-    ap.add_argument('planilha', nargs='?', default=PLANILHA_PADRAO)
+    ap.add_argument('planilha', nargs='?', help='abre este arquivo em vez da última planilha carregada')
     ap.add_argument('--porta', type=int, default=8765)
     ap.add_argument('--sem-navegador', action='store_true')
     args = ap.parse_args()
-    caminho = os.path.abspath(args.planilha)
-    if not os.path.isfile(caminho):
-        sys.exit(f'Planilha não encontrada: {caminho}')
-    planilha = Planilha(caminho, os.path.join(AQUI, 'backups'))
-    planilha.ler()  # valida a aba PAC antes de subir
+    if args.planilha:
+        caminho = os.path.abspath(args.planilha)
+        if not os.path.isfile(caminho):
+            sys.exit(f'Planilha não encontrada: {caminho}')
+        planilha = Planilha(caminho, None)
+        planilha.ler()  # valida a aba PAC antes de subir
+    else:
+        carregar_copia()
     url = f'http://localhost:{args.porta}'
     servidor = ThreadingHTTPServer(('127.0.0.1', args.porta), Handler)
-    print(f'Calendário PAC em {url}\nPlanilha: {caminho}\nCtrl+C para encerrar.')
+    origem = planilha.caminho if planilha else 'nenhuma (use o botão "Abrir planilha")'
+    print(f'Calendário PAC em {url}\nPlanilha: {origem}\nCtrl+C para encerrar.')
     if not args.sem_navegador:
         webbrowser.open(url)
     try:
