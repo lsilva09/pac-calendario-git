@@ -38,11 +38,13 @@
   </label>
   <label class="check"><input id="filtroVirtual" type="checkbox" checked> Mostrar EaD / online</label>
   <label class="check"><input id="filtroSuspensos" type="checkbox" checked> Mostrar suspensos</label>
+  <label class="check"><input id="filtroExternos" type="checkbox" checked> Mostrar eventos externos</label>
 </section>
 
 <main class="corpo">
   <div id="vista" class="vista"></div>
   <aside class="lateral">
+    <button id="abrirLista" class="secundario botao-lista" title="Listar todos os eventos de um período">📋 Gerar lista de eventos</button>
     <section>
       <h3>Conflitos de ambiente <span id="qtdConflitos" class="contador"></span></h3>
       <p class="sutil">Eventos presenciais no mesmo ambiente, no mesmo dia e com horários sobrepostos (ou sem horário informado).</p>
@@ -70,6 +72,30 @@
       <button type="submit" id="fechar" class="primario">Fechar</button>
     </footer>
   </form>
+</dialog>
+
+<dialog id="lista" class="lista-eventos">
+  <header class="modal-topo">
+    <h2>Lista de eventos</h2>
+    <span class="espaco"></span>
+    <button type="button" class="icone" data-fechar-lista aria-label="Fechar">×</button>
+  </header>
+  <form id="formLista" class="lista-filtros">
+    <label>De <input id="listaDe" type="date" required></label>
+    <label>Até <input id="listaAte" type="date" required></label>
+    <label class="check"><input id="listaVirtual" type="checkbox" checked> Incluir EaD / online</label>
+    <label class="check"><input id="listaExternos" type="checkbox" checked> Incluir eventos externos</label>
+    <label class="check"><input id="listaSuspensos" type="checkbox"> Incluir suspensos</label>
+    <span class="espaco"></span>
+    <button type="submit" class="primario">Gerar</button>
+  </form>
+  <div id="resultadoLista" class="resultado-lista"></div>
+  <footer class="modal-rodape">
+    <span class="espaco"></span>
+    <button type="button" id="copiarLista" class="secundario" disabled>Copiar texto</button>
+    <button type="button" id="imprimirLista" class="secundario" disabled>Imprimir</button>
+    <button type="button" class="primario" data-fechar-lista>Fechar</button>
+  </footer>
 </dialog>
 
 <dialog id="ajuda" class="ajuda">
@@ -101,7 +127,7 @@
         <li><b>‹ ›</b> (ou as setas ← → do teclado) trocam o mês; <b>Hoje</b> volta ao mês atual.</li>
         <li><b>Por ambiente</b>: cada linha é um local e cada coluna, um dia. É a melhor vista para ver se uma sala está ocupada.</li>
         <li><b>Mês</b>: calendário tradicional, com uma cor por ambiente.</li>
-        <li><b>Filtros</b>: escolha um ambiente, busque por nome, instrutor ou PROAD, e oculte EaD/online ou eventos suspensos.</li>
+        <li><b>Filtros</b>: escolha um ambiente, busque por nome, instrutor ou PROAD, e oculte EaD/online, eventos suspensos ou eventos externos (LOCAL “Evento Externo”).</li>
       </ul>
     </section>
     <section>
@@ -109,7 +135,7 @@
       <ul>
         <li>Células com <span class="marca-conflito">borda vermelha</span> indicam dois eventos presenciais <b>no mesmo local, no mesmo dia e com horários sobrepostos</b> (ou sem horário informado).</li>
         <li>O painel <b>Conflitos de ambiente</b>, à direita, lista os conflitos do mês. Clique no nome para abrir o evento.</li>
-        <li>Eventos EaD/online e eventos sem local não entram nessa conferência.</li>
+        <li>Eventos EaD/online, eventos externos e eventos sem local não entram nessa conferência.</li>
       </ul>
     </section>
     <section>
@@ -118,6 +144,15 @@
         <li>Clique no cartão do evento para ver todos os campos da linha da planilha, as datas reconhecidas e os conflitos dele.</li>
         <li>O calendário <b>não altera a planilha</b>. Correções devem ser feitas na planilha do Google Drive.</li>
         <li>Se o PERÍODO estiver vazio ou não for reconhecido, o evento aparece no painel <b>Sem data reconhecida</b> do mês.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>6. Lista de eventos de um período</h3>
+      <ul>
+        <li>No painel à direita, clique em <b>📋 Gerar lista de eventos</b>, escolha as datas <b>De</b> e <b>Até</b> e clique em <b>Gerar</b>.</li>
+        <li>Cada evento aparece com período e horário (como estão na planilha), o nome e o local.</li>
+        <li>Eventos que começam antes ou terminam depois do período também entram, com o período completo.</li>
+        <li><b>Copiar texto</b> permite colar a lista num e-mail ou documento. <b>Imprimir</b> também serve para salvar em PDF.</li>
       </ul>
     </section>
   </div>

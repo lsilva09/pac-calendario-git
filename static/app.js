@@ -19,8 +19,10 @@ const estado = {
   filtroAmbiente: '',
   busca: '',
   mostrarVirtual: lerPref('virtual', '1') === '1',
+  mostrarExternos: lerPref('externos', '1') === '1',
   mostrarSuspensos: true,
   editando: null,
+  lista: [],
 };
 
 const $ = (s) => document.querySelector(s);
@@ -146,8 +148,14 @@ function partesLocal(ev) {
   return ev.ambiente.split(' / ').map((p) => p.trim()).filter(Boolean);
 }
 
+// Eventos fora da EJud: LOCAL "Evento Externo" na planilha.
+function externo(ev) {
+  return ev.ambiente.trim().toLowerCase() === 'evento externo';
+}
+
 function visivel(ev) {
   if (!estado.mostrarVirtual && ev.virtual) return false;
+  if (!estado.mostrarExternos && externo(ev)) return false;
   if (!estado.mostrarSuspensos && ev.suspenso) return false;
   if (estado.filtroAmbiente) {
     const ok = estado.filtroAmbiente === SEM_LOCAL ? !ev.ambiente : partesLocal(ev).includes(estado.filtroAmbiente);
@@ -166,7 +174,7 @@ function sobrepoe(a, b) {
 }
 
 function participaDeConflito(ev) {
-  return !ev.virtual && !ev.suspenso && ev.ambiente;
+  return !ev.virtual && !ev.suspenso && ev.ambiente && !externo(ev);
 }
 
 // Mapa data -> lista de pares [a, b] em conflito.
@@ -372,6 +380,72 @@ function eventoPorLinha(linha) {
   return estado.dados.eventos.find((e) => e.linha === Number(linha));
 }
 
+// ---------- lista de eventos de um período ----------
+// Período, horário e local aparecem como estão na planilha.
+function itensLista(de, ate, comVirtual, comExternos, comSuspensos) {
+  return estado.dados.eventos
+    .filter((ev) => (comVirtual || !ev.virtual) && (comExternos || !externo(ev)) && (comSuspensos || !ev.suspenso)
+      && ev.datas.some((d) => d >= de && d <= ate))
+    .sort((a, b) => a.datas[0].localeCompare(b.datas[0]) || a.campos.I.localeCompare(b.campos.I))
+    .map((ev) => ({
+      linha: ev.linha,
+      quando: `${ev.campos.A.replace(/\s*\n\s*/g, ' ').trim()} · ${ev.campos.I.replace(/\s*\n\s*/g, ' ').trim() || 'horário não informado'}`,
+      nome: ev.campos.C.trim() || '(sem nome)',
+      local: ev.campos.N.replace(/\s*\n\s*/g, ' ').trim() || SEM_LOCAL,
+    }));
+}
+
+function tituloLista() {
+  const br = (d) => d.split('-').reverse().join('/');
+  const n = estado.lista.length;
+  return `Eventos de ${br($('#listaDe').value)} a ${br($('#listaAte').value)} — ${n} evento${n === 1 ? '' : 's'}`;
+}
+
+function textoLista() {
+  return [tituloLista(), ...estado.lista.map((i) => `${i.quando}\n${i.nome}\n${i.local}`)].join('\n\n');
+}
+
+function gerarLista() {
+  const de = $('#listaDe').value;
+  const ate = $('#listaAte').value;
+  if (!estado.dados || !de || !ate) return;
+  if (de > ate) { aviso('A data inicial deve ser anterior à final.', true); return; }
+  estado.lista = itensLista(de, ate, $('#listaVirtual').checked, $('#listaExternos').checked, $('#listaSuspensos').checked);
+  $('#resultadoLista').innerHTML = `<h3>${esc(tituloLista())}</h3>` + (estado.lista.length
+    ? estado.lista.map((i) => `<div class="item-lista"><div class="quando">${esc(i.quando)}</div>`
+      + `<a data-linha="${i.linha}">${esc(i.nome)}</a><div class="sutil">${esc(i.local)}</div></div>`).join('')
+    : '<p class="sutil">Nenhum evento neste período.</p>');
+  $('#copiarLista').disabled = $('#imprimirLista').disabled = !estado.lista.length;
+}
+
+function abrirLista() {
+  if (!$('#listaDe').value) {
+    const ultimo = new Date(estado.ano, estado.mes + 1, 0).getDate();
+    $('#listaDe').value = iso(estado.ano, estado.mes, 1);
+    $('#listaAte').value = iso(estado.ano, estado.mes, ultimo);
+  }
+  $('#lista').showModal();
+}
+
+async function copiarLista() {
+  try { await navigator.clipboard.writeText(textoLista()); aviso('Lista copiada. Cole onde quiser.'); }
+  catch { aviso('Não consegui copiar automaticamente. Selecione o texto da lista e copie.', true); }
+}
+
+function imprimirLista() {
+  const janela = window.open('', '_blank');
+  if (!janela) { aviso('O navegador bloqueou a janela de impressão. Permita pop-ups para localhost.', true); return; }
+  janela.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(tituloLista())}</title>`
+    + '<style>body{font:14px/1.45 system-ui,sans-serif;margin:24px;color:#000}h1{font-size:17px}'
+    + '.item{margin:0 0 14px;break-inside:avoid}.quando{font-weight:600}.local{color:#444}</style></head><body>'
+    + `<h1>${esc(tituloLista())}</h1>`
+    + estado.lista.map((i) => `<div class="item"><div class="quando">${esc(i.quando)}</div><div>${esc(i.nome)}</div><div class="local">${esc(i.local)}</div></div>`).join('')
+    + '</body></html>');
+  janela.document.close();
+  janela.focus();
+  janela.print();
+}
+
 // ---------- eventos da página ----------
 function mudarMes(delta) {
   estado.mes += delta;
@@ -395,12 +469,19 @@ $('#filtroAmbiente').onchange = (e) => { estado.filtroAmbiente = e.target.value;
 $('#filtroBusca').oninput = (e) => { estado.busca = e.target.value.trim().toLowerCase(); render(); };
 $('#filtroVirtual').checked = estado.mostrarVirtual;
 $('#filtroVirtual').onchange = (e) => { estado.mostrarVirtual = e.target.checked; gravarPref('virtual', e.target.checked ? '1' : '0'); render(); };
+$('#filtroExternos').checked = estado.mostrarExternos;
+$('#filtroExternos').onchange = (e) => { estado.mostrarExternos = e.target.checked; gravarPref('externos', e.target.checked ? '1' : '0'); render(); };
 $('#filtroSuspensos').onchange = (e) => { estado.mostrarSuspensos = e.target.checked; render(); };
 $('#abrirAjuda').onclick = () => $('#ajuda').showModal();
+$('#abrirLista').onclick = abrirLista;
+$('#formLista').onsubmit = (e) => { e.preventDefault(); gerarLista(); };
+$('#copiarLista').onclick = copiarLista;
+$('#imprimirLista').onclick = imprimirLista;
+document.querySelectorAll('[data-fechar-lista]').forEach((b) => { b.onclick = () => $('#lista').close(); });
 document.querySelectorAll('[data-fechar-ajuda]').forEach((b) => { b.onclick = () => $('#ajuda').close(); });
 $('#ajuda').addEventListener('close', () => gravarPref('ajudaVista', '1'));
 document.addEventListener('keydown', (e) => {
-  if ($('#modal').open || $('#ajuda').open || e.target.matches('input, textarea, select')) return;
+  if ($('#modal').open || $('#ajuda').open || $('#lista').open || e.target.matches('input, textarea, select')) return;
   if (e.key === 'ArrowLeft') mudarMes(-1);
   if (e.key === 'ArrowRight') mudarMes(1);
 });

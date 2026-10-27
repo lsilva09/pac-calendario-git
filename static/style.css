@@ -190,3 +190,20 @@ dialog.ajuda { width: min(780px, 96vw); }
 .local-linha select:focus { outline: 2px solid var(--primaria); outline-offset: -1px; }
 button.link { align-self: flex-start; border: 0; background: none; color: var(--primaria); padding: 2px 0; font-size: 12.5px; }
 button.link:hover { background: none; text-decoration: underline; }
+
+/* Lista de eventos de um período */
+.botao-lista { width: 100%; padding: 10px; font-weight: 600; }
+dialog.lista-eventos { width: min(720px, 96vw); }
+.lista-eventos .modal-topo { align-items: center; }
+.lista-filtros { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 16px; padding: 4px 20px 12px; border-bottom: 1px solid var(--borda); }
+.lista-filtros label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--sutil); }
+.lista-filtros label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 13px; color: var(--texto); padding-bottom: 6px; }
+.lista-filtros input[type=date] { border: 1px solid var(--borda); border-radius: 8px; padding: 6px 8px; background: var(--superficie); color: var(--texto); font-size: 13.5px; }
+.resultado-lista { padding: 4px 20px; max-height: 55vh; overflow: auto; }
+.resultado-lista:empty { display: none; }
+.resultado-lista h3 { font-size: 14px; margin: 12px 0 10px; }
+.item-lista { padding: 8px 0; border-bottom: 1px solid var(--borda); font-size: 13.5px; display: flex; flex-direction: column; gap: 2px; }
+.item-lista:last-child { border-bottom: 0; }
+.item-lista .quando { font-weight: 600; }
+.item-lista a { color: var(--primaria); cursor: pointer; text-decoration: none; }
+.item-lista a:hover { text-decoration: underline; }
