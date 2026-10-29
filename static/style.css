@@ -207,3 +207,13 @@ dialog.lista-eventos { width: min(720px, 96vw); }
 .item-lista .quando { font-weight: 600; }
 .item-lista a { color: var(--primaria); cursor: pointer; text-decoration: none; }
 .item-lista a:hover { text-decoration: underline; }
+
+/* Exportar para Google Agenda */
+.lateral .botao-lista + .botao-lista { margin-top: -8px; }
+.exportar-corpo { padding: 4px 20px 0; display: flex; flex-direction: column; gap: 10px; font-size: 13.5px; }
+.exportar-corpo label.check { display: flex; align-items: center; gap: 6px; }
+.exportar-periodo { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 14px; }
+.exportar-periodo label:not(.check) { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--sutil); }
+.exportar-periodo input[type=date] { border: 1px solid var(--borda); border-radius: 8px; padding: 6px 8px; background: var(--superficie); color: var(--texto); font-size: 13.5px; }
+.exportar-opcoes { display: flex; flex-wrap: wrap; gap: 6px 18px; padding-top: 8px; border-top: 1px solid var(--borda); }
+.exportar-corpo p { margin: 0; }

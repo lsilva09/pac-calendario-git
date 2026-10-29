@@ -45,6 +45,7 @@
   <div id="vista" class="vista"></div>
   <aside class="lateral">
     <button id="abrirLista" class="secundario botao-lista" title="Listar todos os eventos de um período">📋 Gerar lista de eventos</button>
+    <button id="abrirExportar" class="secundario botao-lista" title="Baixar um arquivo .ics para importar no Google Agenda">📅 Exportar para Google Agenda</button>
     <section>
       <h3>Conflitos de ambiente <span id="qtdConflitos" class="contador"></span></h3>
       <p class="sutil">Eventos presenciais no mesmo ambiente, no mesmo dia e com horários sobrepostos (ou sem horário informado).</p>
@@ -95,6 +96,34 @@
     <button type="button" id="copiarLista" class="secundario" disabled>Copiar texto</button>
     <button type="button" id="imprimirLista" class="secundario" disabled>Imprimir</button>
     <button type="button" class="primario" data-fechar-lista>Fechar</button>
+  </footer>
+</dialog>
+
+<dialog id="exportar" class="lista-eventos">
+  <header class="modal-topo">
+    <h2>Exportar para Google Agenda</h2>
+    <span class="espaco"></span>
+    <button type="button" class="icone" data-fechar-exportar aria-label="Fechar">×</button>
+  </header>
+  <form id="formExportar" class="exportar-corpo">
+    <label class="check"><input type="radio" name="expAlcance" value="todos" checked> Todos os eventos da planilha</label>
+    <div class="exportar-periodo">
+      <label class="check"><input type="radio" name="expAlcance" value="periodo"> Só um período:</label>
+      <label>De <input id="expDe" type="date"></label>
+      <label>Até <input id="expAte" type="date"></label>
+    </div>
+    <div class="exportar-opcoes">
+      <label class="check"><input id="expVirtual" type="checkbox" checked> Incluir EaD / online</label>
+      <label class="check"><input id="expExternos" type="checkbox" checked> Incluir eventos externos</label>
+      <label class="check"><input id="expSuspensos" type="checkbox"> Incluir suspensos</label>
+    </div>
+    <p id="resumoExportar" class="sutil"></p>
+    <p class="sutil">Links e senhas de reunião (Zoom, Meet etc.) não são incluídos no arquivo.</p>
+  </form>
+  <footer class="modal-rodape">
+    <span class="espaco"></span>
+    <button type="button" class="secundario" data-fechar-exportar>Fechar</button>
+    <button type="submit" form="formExportar" class="primario">Baixar arquivo .ics</button>
   </footer>
 </dialog>
 
@@ -153,6 +182,17 @@
         <li>Cada evento aparece com período e horário (como estão na planilha), o nome e o local.</li>
         <li>Eventos que começam antes ou terminam depois do período também entram, com o período completo.</li>
         <li><b>Copiar texto</b> permite colar a lista num e-mail ou documento. <b>Imprimir</b> também serve para salvar em PDF.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>7. Exportar para o Google Agenda</h3>
+      <ul>
+        <li>Clique em <b>📅 Exportar para Google Agenda</b>, escolha os eventos e clique em <b>Baixar arquivo .ics</b>.</li>
+        <li>No Google Agenda (computador), crie antes uma agenda só para o PAC: <b>Configurações → Adicionar agenda → Criar nova agenda</b>.</li>
+        <li>Depois vá em <b>Configurações → Importar e exportar → Importar</b>, escolha o arquivo baixado e a agenda do PAC.</li>
+        <li>Para atualizar, apague a agenda do PAC, crie de novo e importe um arquivo novo. Assim não ficam eventos duplicados.</li>
+        <li>Eventos com horário entram com hora marcada. Sem horário reconhecido, entram como dia inteiro. EaD e externos de vários dias sem horário viram uma faixa única.</li>
+        <li>Links e senhas de reunião nunca são exportados.</li>
       </ul>
     </section>
   </div>

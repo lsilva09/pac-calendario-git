@@ -446,6 +446,135 @@ function imprimirLista() {
   janela.print();
 }
 
+// ---------- exportação para Google Agenda (.ics) ----------
+// Remove links e dados de acesso a reuniões (Zoom, Meet, Teams…) por segurança.
+const LINHA_SIGILOSA = /senha|passcode|password|id da reuni|meeting id/i;
+const LINK = /\b(?:https?:\/\/|www\.)\S+|\b\S*(?:zoom\.us|meet\.google\.com|teams\.microsoft\.com|teams\.live\.com)\S*/gi;
+function semLinks(texto) {
+  return String(texto ?? '').split('\n').filter((l) => !LINHA_SIGILOSA.test(l))
+    .map((l) => l.replace(LINK, '').replace(/\s{2,}/g, ' ').trim()).filter(Boolean).join('\n');
+}
+
+function icsTexto(t) {
+  return t.replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+}
+// Quebra linhas longas em até 75 bytes, como pede o formato.
+function icsLinha(linha) {
+  const cod = new TextEncoder();
+  const partes = [];
+  let atual = '';
+  for (const ch of linha) {
+    if (cod.encode(atual + ch).length > (partes.length ? 74 : 75)) { partes.push(atual); atual = ''; }
+    atual += ch;
+  }
+  partes.push(atual);
+  return partes.join('\r\n ');
+}
+const icsData = (d) => d.replace(/-/g, '');
+function icsHora(d, minutos) {
+  return `${icsData(d)}T${String(Math.floor(minutos / 60)).padStart(2, '0')}${String(minutos % 60).padStart(2, '0')}00`;
+}
+function diaSeguinte(d) {
+  const [a, m, dia] = d.split('-').map(Number);
+  const dt = new Date(a, m - 1, dia + 1);
+  return iso(dt.getFullYear(), dt.getMonth(), dt.getDate());
+}
+
+function descricaoIcs(ev) {
+  const c = ev.campos;
+  const linhas = [
+    ['PROAD', c.B], ['Modalidade', c.M], ['Carga horária', c.K], ['Instrutor', c.G],
+    ['Período na planilha', c.A], ['Horário na planilha', c.I], ['Situação', c.O],
+  ].map(([rotulo, valor]) => [rotulo, semLinks(valor).replace(/\n/g, ' ')]).filter(([, v]) => v);
+  return linhas.map(([r, v]) => `${r}: ${v}`).join('\n') + `\n(Linha ${ev.linha} da planilha PAC)`;
+}
+
+// Um compromisso por dia e por horário; EaD e externos de vários dias sem horário viram um bloco único.
+function compromissosIcs(ev, de, ate) {
+  const datas = ev.datas.filter((d) => d >= de && d <= ate);
+  if (!datas.length) return [];
+  if ((ev.virtual || externo(ev)) && ev.datas.length > 1 && !ev.horarios.length) {
+    return [{ uid: `${ev.linha}-bloco`, inicio: ['DATE', icsData(ev.datas[0])], fim: ['DATE', icsData(diaSeguinte(ev.datas.at(-1)))] }];
+  }
+  return datas.flatMap((d) => (ev.horarios.length
+    ? ev.horarios.map(([i, f], n) => ({ uid: `${ev.linha}-${icsData(d)}-${n}`, inicio: ['HORA', icsHora(d, i)], fim: ['HORA', icsHora(d, f)] }))
+    : [{ uid: `${ev.linha}-${icsData(d)}`, inicio: ['DATE', icsData(d)], fim: ['DATE', icsData(diaSeguinte(d))] }]));
+}
+
+function opcoesExportar() {
+  const periodo = document.querySelector('input[name=expAlcance]:checked').value === 'periodo';
+  return {
+    de: periodo ? $('#expDe').value : '0000-00-00',
+    ate: periodo ? $('#expAte').value : '9999-99-99',
+    periodo,
+    virtual: $('#expVirtual').checked,
+    externos: $('#expExternos').checked,
+    suspensos: $('#expSuspensos').checked,
+  };
+}
+
+function eventosExportar(o) {
+  return estado.dados.eventos.filter((ev) => (o.virtual || !ev.virtual) && (o.externos || !externo(ev)) && (o.suspensos || !ev.suspenso));
+}
+
+function resumoExportar() {
+  const o = opcoesExportar();
+  const evs = eventosExportar(o);
+  const comData = evs.filter((ev) => ev.datas.some((d) => d >= o.de && d <= o.ate));
+  const semData = o.periodo ? 0 : evs.filter((ev) => !ev.datas.length).length;
+  $('#resumoExportar').textContent = `${comData.length} evento(s) serão exportados.`
+    + (semData ? ` ${semData} evento(s) sem data reconhecida ficam de fora.` : '');
+}
+
+function gerarIcs(o) {
+  const agora = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const linhas = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//EJud-13//Calendario PAC//PT-BR', 'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH', 'X-WR-CALNAME:PAC EJud-13', 'X-WR-TIMEZONE:America/Fortaleza',
+    'BEGIN:VTIMEZONE', 'TZID:America/Fortaleza', 'BEGIN:STANDARD', 'DTSTART:19700101T000000',
+    'TZOFFSETFROM:-0300', 'TZOFFSETTO:-0300', 'TZNAME:-03', 'END:STANDARD', 'END:VTIMEZONE'];
+  let total = 0;
+  for (const ev of eventosExportar(o)) {
+    const titulo = semLinks(ev.campos.C).replace(/\n/g, ' ') || '(sem nome)';
+    const local = semLinks(ev.campos.N).replace(/\n/g, ' ') || SEM_LOCAL;
+    for (const c of compromissosIcs(ev, o.de, o.ate)) {
+      const quando = ([nome, [tipo, valor]]) => (tipo === 'DATE' ? `${nome};VALUE=DATE:${valor}` : `${nome};TZID=America/Fortaleza:${valor}`);
+      linhas.push('BEGIN:VEVENT', `UID:pac-${c.uid}@ejud13-calendario`, `DTSTAMP:${agora}`,
+        quando(['DTSTART', c.inicio]), quando(['DTEND', c.fim]),
+        `SUMMARY:${icsTexto((ev.suspenso ? '[SUSPENSO] ' : '') + titulo)}`,
+        `LOCATION:${icsTexto(local)}`, `DESCRIPTION:${icsTexto(descricaoIcs(ev))}`,
+        'TRANSP:TRANSPARENT', 'END:VEVENT');
+      total++;
+    }
+  }
+  linhas.push('END:VCALENDAR');
+  return { texto: linhas.map(icsLinha).join('\r\n') + '\r\n', total };
+}
+
+function abrirExportar() {
+  if (!$('#expDe').value) {
+    $('#expDe').value = iso(estado.ano, estado.mes, 1);
+    $('#expAte').value = iso(estado.ano, estado.mes, new Date(estado.ano, estado.mes + 1, 0).getDate());
+  }
+  resumoExportar();
+  $('#exportar').showModal();
+}
+
+function baixarIcs() {
+  if (!estado.dados) return;
+  const o = opcoesExportar();
+  if (o.periodo && (!o.de || !o.ate || o.de > o.ate)) { aviso('Escolha um período válido (a data inicial deve ser anterior à final).', true); return; }
+  const { texto, total } = gerarIcs(o);
+  if (!total) { aviso('Nenhum evento para exportar com essas opções.', true); return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([texto], { type: 'text/calendar;charset=utf-8' }));
+  a.download = o.periodo ? `PAC-EJud13-${o.de}-a-${o.ate}.ics` : 'PAC-EJud13-agenda.ics';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  aviso(`Arquivo baixado com ${total} compromisso(s). Importe-o no Google Agenda.`);
+}
+
 // ---------- eventos da página ----------
 function mudarMes(delta) {
   estado.mes += delta;
@@ -477,11 +606,15 @@ $('#abrirLista').onclick = abrirLista;
 $('#formLista').onsubmit = (e) => { e.preventDefault(); gerarLista(); };
 $('#copiarLista').onclick = copiarLista;
 $('#imprimirLista').onclick = imprimirLista;
+$('#abrirExportar').onclick = abrirExportar;
+$('#formExportar').onsubmit = (e) => { e.preventDefault(); baixarIcs(); };
+$('#formExportar').onchange = resumoExportar;
+document.querySelectorAll('[data-fechar-exportar]').forEach((b) => { b.onclick = () => $('#exportar').close(); });
 document.querySelectorAll('[data-fechar-lista]').forEach((b) => { b.onclick = () => $('#lista').close(); });
 document.querySelectorAll('[data-fechar-ajuda]').forEach((b) => { b.onclick = () => $('#ajuda').close(); });
 $('#ajuda').addEventListener('close', () => gravarPref('ajudaVista', '1'));
 document.addEventListener('keydown', (e) => {
-  if ($('#modal').open || $('#ajuda').open || $('#lista').open || e.target.matches('input, textarea, select')) return;
+  if ($('#modal').open || $('#ajuda').open || $('#lista').open || $('#exportar').open || e.target.matches('input, textarea, select')) return;
   if (e.key === 'ArrowLeft') mudarMes(-1);
   if (e.key === 'ArrowRight') mudarMes(1);
 });
