@@ -484,9 +484,9 @@ function descricaoIcs(ev) {
   const c = ev.campos;
   const linhas = [
     ['PROAD', c.B], ['Modalidade', c.M], ['Carga horária', c.K], ['Instrutor', c.G],
-    ['Período na planilha', c.A], ['Horário na planilha', c.I], ['Situação', c.O],
+    ['Período', c.A], ['Horário', c.I], ['Situação', c.O],
   ].map(([rotulo, valor]) => [rotulo, semLinks(valor).replace(/\n/g, ' ')]).filter(([, v]) => v);
-  return linhas.map(([r, v]) => `${r}: ${v}`).join('\n') + `\n(Linha ${ev.linha} da planilha PAC)`;
+  return linhas.map(([r, v]) => `${r}: ${v}`).join('\n');
 }
 
 // Um compromisso por dia e por horário; EaD e externos de vários dias sem horário viram um bloco único.
