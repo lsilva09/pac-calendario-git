@@ -521,9 +521,26 @@ function resumoExportar() {
   const o = opcoesExportar();
   const evs = eventosExportar(o);
   const comData = evs.filter((ev) => ev.datas.some((d) => d >= o.de && d <= o.ate));
-  const semData = o.periodo ? 0 : evs.filter((ev) => !ev.datas.length).length;
+  const semData = evs.filter((ev) => !ev.datas.length && (!o.periodo || mesesDoPeriodo(o.de, o.ate).has(ev.mes_bloco)));
   $('#resumoExportar').textContent = `${comData.length} evento(s) serão exportados.`
-    + (semData ? ` ${semData} evento(s) sem data reconhecida ficam de fora.` : '');
+    + (semData.length ? ` ${semData.length} evento(s) sem data reconhecida ficam de fora:` : '');
+  $('#expSemData').hidden = !semData.length;
+  $('#expQtdSemData').textContent = semData.length;
+  $('#expListaSemData').innerHTML = semData.map((ev) => `<li><a data-linha="${ev.linha}">${esc(ev.campos.C || '(sem nome)')}</a>`
+    + `<br><span class="sutil">Linha ${ev.linha} · Período: ${esc(ev.campos.A || 'vazio')}</span></li>`).join('');
+}
+
+// Meses (1–12) tocados pelo período escolhido, para achar os eventos sem data do bloco desses meses.
+function mesesDoPeriodo(de, ate) {
+  const meses = new Set();
+  if (!de || !ate || de > ate) return meses;
+  let [a, m] = de.split('-').map(Number);
+  const [aFim, mFim] = ate.split('-').map(Number);
+  while (a < aFim || (a === aFim && m <= mFim)) {
+    meses.add(m);
+    if (++m > 12) { m = 1; a++; }
+  }
+  return meses;
 }
 
 function gerarIcs(o) {
