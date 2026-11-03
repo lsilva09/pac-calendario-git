@@ -28,7 +28,7 @@ def interpretar_periodo(texto, ano=ANO_PADRAO):
     if re.fullmatch(r'\d{4,6}(\.0+)?', s):
         return [serial_para_data(s)]
     # Observações de remarcação citam a data antiga: descartar o trecho inteiro.
-    s = re.sub(r'\([^)]*(transf|tranf|remarc|antes)[^)]*\)', ' ', s)
+    s = re.sub(r'\([^)]*(transf|tranf|remarc|reman|adiad|mudad|antes)[^)]*\)', ' ', s)
     s = re.sub(r'\b(turma|módulo|modulo|parte|etapa|grupo|aula)\s*\d+', ' ', s)
     s = s.replace('(', ' ').replace(')', ' ')
 
